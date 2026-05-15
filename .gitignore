@@ -1,3 +1,16 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+apps/web/data/backups
+apps/web/data/*.sqlite
+apps/web/data/*.sqlite-*
+coverage/
+.env
+.env.local
+DerivedData/
+*.xcuserstate
+
 # Logs
 logs
 *.log

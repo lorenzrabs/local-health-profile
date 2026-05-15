@@ -1,0 +1,18 @@
+{
+  "name": "local-health-profile",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first personal health profile dashboard with HealthKit sync companion.",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @health-profile/web",
+    "build": "npm run build --workspace @health-profile/web",
+    "test": "npm run test --workspace @health-profile/web",
+    "typecheck": "npm run typecheck --workspace @health-profile/web"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
