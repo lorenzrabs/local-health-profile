@@ -3,10 +3,10 @@ import os from "node:os";
 import QRCode from "qrcode";
 import type { AppDatabase } from "./db";
 
-export async function createPairing(db: AppDatabase, port: number) {
+export async function createPairing(db: AppDatabase, port: number, publicUrl?: string) {
   const token = crypto.randomBytes(18).toString("base64url");
   const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-  const serverUrl = `http://${getLanAddress()}:${port}`;
+  const serverUrl = publicUrl?.replace(/\/+$/, "") || `http://${getLanAddress()}:${port}`;
   db.prepare(`INSERT INTO pairing_tokens (token, label, expires_at) VALUES (?, ?, ?)`).run(
     token,
     "iOS Health Profile",

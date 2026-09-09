@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
@@ -33,8 +34,46 @@ import {
   syncPayloadSchema
 } from "./validation";
 
-export async function createApp(db: AppDatabase, options: { port: number; dev?: boolean }) {
+type BasicAuthConfig = {
+  username: string;
+  password: string;
+};
+
+export async function createApp(
+  db: AppDatabase,
+  options: { port: number; dev?: boolean; basicAuth?: BasicAuthConfig; publicUrl?: string }
+) {
   const app = express();
+
+  if (options.basicAuth) {
+    app.use((req, res, next) => {
+      if (req.path === "/api/health") {
+        next();
+        return;
+      }
+
+      const authorization = req.header("authorization");
+      if (req.path.startsWith("/api/") && req.path !== "/api/pairing" && requirePairingToken(db, authorization)) {
+        next();
+        return;
+      }
+
+      const encodedCredentials = authorization?.startsWith("Basic ") ? authorization.slice("Basic ".length).trim() : "";
+      const decodedCredentials = encodedCredentials ? Buffer.from(encodedCredentials, "base64").toString("utf8") : "";
+      const separator = decodedCredentials.indexOf(":");
+      const username = separator >= 0 ? decodedCredentials.slice(0, separator) : "";
+      const password = separator >= 0 ? decodedCredentials.slice(separator + 1) : "";
+
+      if (safeEqual(username, options.basicAuth!.username) && safeEqual(password, options.basicAuth!.password)) {
+        next();
+        return;
+      }
+
+      res.setHeader("WWW-Authenticate", 'Basic realm="Health Profile", charset="UTF-8"');
+      res.status(401).json({ error: "Authentication required." });
+    });
+  }
+
   app.use(express.json({ limit: "50mb" }));
 
   app.get("/api/health", (_req, res) => {
@@ -43,7 +82,7 @@ export async function createApp(db: AppDatabase, options: { port: number; dev?: 
 
   app.get("/api/pairing", async (_req, res, next) => {
     try {
-      res.json(await createPairing(db, options.port));
+      res.json(await createPairing(db, options.port, options.publicUrl));
     } catch (error) {
       next(error);
     }
@@ -169,4 +208,10 @@ export async function createApp(db: AppDatabase, options: { port: number; dev?: 
   }
 
   return app;
+}
+
+function safeEqual(actual: string, expected: string) {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }

@@ -10,6 +10,90 @@ afterEach(async () => {
 });
 
 describe("API", () => {
+  it("requires configured basic credentials for protected routes", async () => {
+    const app = await createApp(openDatabase(":memory:"), {
+      port: 0,
+      dev: false,
+      basicAuth: { username: "lorenz", password: "correct horse battery staple" }
+    });
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing test server address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const unauthenticated = await fetch(`${baseUrl}/api/habits`);
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("www-authenticate")).toBe('Basic realm="Health Profile", charset="UTF-8"');
+
+    const wrongCredentials = await fetch(`${baseUrl}/api/habits`, {
+      headers: { Authorization: `Basic ${Buffer.from("lorenz:wrong").toString("base64")}` }
+    });
+    expect(wrongCredentials.status).toBe(401);
+
+    const authenticated = await fetch(`${baseUrl}/api/habits`, {
+      headers: { Authorization: `Basic ${Buffer.from("lorenz:correct horse battery staple").toString("base64")}` }
+    });
+    expect(authenticated.status).toBe(200);
+  });
+
+  it("keeps the health endpoint public when basic auth is enabled", async () => {
+    const app = await createApp(openDatabase(":memory:"), {
+      port: 0,
+      dev: false,
+      basicAuth: { username: "lorenz", password: "correct horse battery staple" }
+    });
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing test server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/health`);
+    expect(response.status).toBe(200);
+  });
+
+  it("accepts a valid pairing token when basic auth is enabled", async () => {
+    const app = await createApp(openDatabase(":memory:"), {
+      port: 0,
+      dev: false,
+      basicAuth: { username: "lorenz", password: "correct horse battery staple" }
+    });
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing test server address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const basicAuthorization = `Basic ${Buffer.from("lorenz:correct horse battery staple").toString("base64")}`;
+
+    const pairing = await fetch(`${baseUrl}/api/pairing`, {
+      headers: { Authorization: basicAuthorization }
+    }).then((response) => response.json() as Promise<{ token: string }>);
+    const response = await fetch(`${baseUrl}/api/habits`, {
+      headers: { Authorization: `Bearer ${pairing.token}` }
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("uses the configured public URL for pairing", async () => {
+    const app = await createApp(openDatabase(":memory:"), {
+      port: 0,
+      dev: false,
+      publicUrl: "http://health.local/"
+    });
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing test server address");
+
+    const pairing = await fetch(`http://127.0.0.1:${address.port}/api/pairing`).then(
+      (response) => response.json() as Promise<{ serverUrl: string; pairingUrl: string }>
+    );
+
+    expect(pairing.serverUrl).toBe("http://health.local");
+    expect(pairing.pairingUrl).toContain(encodeURIComponent("http://health.local"));
+  });
+
   it("serves and upserts habit definitions and entries", async () => {
     const app = await createApp(openDatabase(":memory:"), { port: 0, dev: false });
     const server = app.listen(0);
