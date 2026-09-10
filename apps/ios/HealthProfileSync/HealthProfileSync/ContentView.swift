@@ -1247,18 +1247,77 @@ private struct RecipeSelectionRow: View {
             .toggleStyle(.switch)
             .tint(.black)
 
-            if isSelected {
-                Stepper(value: $portions, in: 1...99) {
-                    Text("\(portions) Portion\(portions == 1 ? "" : "en")")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.black)
-                }
-                .tint(.black)
+            Stepper(value: $portions, in: 1...99) {
+                Text("\(portions) Portion\(portions == 1 ? "" : "en")")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.black)
             }
+            .tint(.black)
+
+            DisclosureGroup("Rezept ansehen") {
+                recipeDetails
+            }
+            .tint(.black)
         }
         .padding(12)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.black.opacity(0.08)))
+    }
+
+    private var portionFactor: Double {
+        Double(min(99, max(1, portions))) / max(recipe.servingBase, 0.0001)
+    }
+
+    private var recipeDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Zutaten für \(portions) Portion\(portions == 1 ? "" : "en")")
+                .font(.headline)
+            ForEach(recipe.items.indices, id: \.self) { index in
+                let item = recipe.items[index]
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(item.name)
+                    Spacer(minLength: 8)
+                    Text("\(LocalShoppingListBuilder.formatAmount(item.amount * portionFactor)) \(item.unit)")
+                        .multilineTextAlignment(.trailing)
+                }
+                .font(.callout)
+            }
+
+            if !recipe.instructions.isEmpty {
+                Divider()
+                Text("Zubereitung").font(.headline)
+                Text(recipe.instructions)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !recipe.prepNotes.isEmpty {
+                Text("Hinweise").font(.headline)
+                Text(recipe.prepNotes)
+                    .font(.callout)
+                    .foregroundStyle(AppTheme.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !recipe.nutrientsPerServing.isEmpty {
+                Divider()
+                Text("Nährwerte für \(portions) Portion\(portions == 1 ? "" : "en")")
+                    .font(.headline)
+                ForEach(recipe.nutrientsPerServing.indices, id: \.self) { index in
+                    let nutrient = recipe.nutrientsPerServing[index]
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(nutrient.label)
+                        Spacer(minLength: 8)
+                        Text("\(LocalShoppingListBuilder.formatAmount(nutrient.amount * portionFactor)) \(nutrient.unit)")
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .font(.callout)
+                }
+                Text("Schätzwerte aus dem Rezept. Zubereitungstext und Hinweise beschreiben die Basisportion; Zutatenmengen und Nährwerte oben passen sich an deine Portionswahl an.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+        }
+        .foregroundStyle(.black)
+        .padding(.top, 10)
     }
 
     private var recipeSummary: String {

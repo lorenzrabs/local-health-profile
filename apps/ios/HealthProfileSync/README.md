@@ -21,3 +21,5 @@ The changed Swift file passed a syntax parse. Xcode and the iOS SDK are not inst
 ## Rezepte und Einkaufsliste
 
 Nach diesem Update lädt die App Rezepte vom Server in einen lokalen Cache. Im Tab Einkaufsliste können Rezepte und Portionen ausgewählt und Zutaten in Apple Erinnerungen übernommen werden. Nach einmaliger Aktualisierung der Rezepte funktioniert diese Auswahl auch ohne Serververbindung. Die vorhandenen Web-Einkaufslisten bleiben zusätzlich verfügbar. Die Übernahme in Erinnerungen erfolgt nur über die entsprechende Schaltfläche.
+
+Unter **Rezept ansehen** stehen Zutaten, Zubereitung, Hinweise und Nährwerte aus dem lokalen Cache zur Verfügung. Zutatenmengen und Nährwerte skalieren mit der Portionsauswahl. Der Zubereitungstext und seine Mengenangaben bleiben die Beschreibung der Basisportion.
