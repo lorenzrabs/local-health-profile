@@ -136,7 +136,7 @@ export async function createApp(
     const rawRange = Number(req.query.rangeDays ?? 90);
     const rangeDays = rawRange === 30 || rawRange === 365 ? rawRange : 90;
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
-    res.json(getHabitAnalysis(db, rangeDays, date));
+    res.json(getHabitAnalysis(db, rangeDays, date, req.query.comparisonMode === "trackedDays" ? "trackedDays" : "explicit"));
   });
 
   app.post("/api/habits/sync", (req, res) => {

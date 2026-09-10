@@ -170,3 +170,85 @@ describe("habit analysis", () => {
     ).toBe(false);
   });
 });
+
+describe("tracked-day comparison", () => {
+  it("uses empty habits only on logged days from the first known entry, without modifying records", () => {
+    const db = fixture();
+    // A second active habit proves the later days were logged.
+    upsertHabitDefinition(db, {
+      clientId: "other",
+      name: "Other",
+      isActive: true,
+    });
+    syncHabitBatch(db, {
+      entries: Array.from({ length: 14 }, (_, i) => ({
+        habitClientId: "other",
+        date: shiftDate("2026-04-01", i),
+        completed: true,
+      })),
+    });
+    db.prepare("DELETE FROM habit_entries WHERE completed=0").run();
+    const before = db.prepare("SELECT COUNT(*) n FROM habit_entries").get();
+    expect(getHabitAnalysis(db, 30, "2026-04-30").correlations).toEqual([]);
+    const a = getHabitAnalysis(db, 30, "2026-04-30", "trackedDays");
+    const c = a.correlations.find((c) => c.habitClientId === "test-habit")!;
+    expect(c).toMatchObject({
+      eventDays: 7,
+      comparisonDays: 7,
+      inferredComparisonDays: 7,
+      delta: 4,
+    });
+    expect(a.items.find((h) => h.clientId === "test-habit")).toMatchObject({
+      trackedDays: 14,
+      inferredDays: 7,
+      eventRate: 0.5,
+    });
+    expect(a.correlations.some((c) => c.habitClientId === "other")).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) n FROM habit_entries").get()).toEqual(
+      before,
+    );
+    // Activity before the first known habit entry must not create controls.
+    syncHabitBatch(db, {
+      entries: [
+        { habitClientId: "other", date: "2026-03-31", completed: true },
+      ],
+    });
+    expect(
+      getHabitAnalysis(db, 90, "2026-04-30", "trackedDays").correlations.find(
+        (c) => c.habitClientId === "test-habit",
+      )?.comparisonDays,
+    ).toBe(7);
+    db.close();
+  });
+  it("never uses archive-only days as evidence of daily tracking", () => {
+    const db = fixture();
+    upsertHabitDefinition(db, {
+      clientId: "archived",
+      name: "Archived",
+      isActive: false,
+    });
+    syncHabitBatch(db, {
+      entries: [
+        { habitClientId: "archived", date: "2026-04-15", completed: true },
+      ],
+    });
+    syncHealthKitBatch(db, {
+      samples: [
+        {
+          sourceId: "after-archive",
+          type: "restingHeartRate",
+          unit: "bpm",
+          value: 60,
+          startAt: "2026-04-16T10:00:00Z",
+          endAt: "2026-04-16T10:01:00Z",
+        },
+      ],
+      workouts: [],
+    });
+    const c = getHabitAnalysis(db, 30, "2026-04-30", "trackedDays")
+      .correlations[0];
+    expect(c.comparisonDays).toBe(7);
+    expect(c.inferredComparisonDays).toBe(0);
+    db.close();
+  });
+});

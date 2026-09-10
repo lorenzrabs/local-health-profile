@@ -1,3 +1,4 @@
+import { getMindfulnessSummary } from "./mindfulness";
 import type {
   HabitAnalysis,
   HabitAnalysisItem,
@@ -13,7 +14,12 @@ type HabitRow = {
   name: string;
   is_active: number;
 };
-type Entry = { habit_id: number; date: string; completed: number };
+type Entry = {
+  habit_id: number;
+  date: string;
+  completed: number;
+  inferred?: boolean;
+};
 const MIN_GROUP = 7;
 const METRICS = [
   {
@@ -30,6 +36,7 @@ export function getHabitAnalysis(
   db: AppDatabase,
   rangeDays: HabitAnalysis["rangeDays"] = 90,
   date = localDate(),
+  comparisonMode: "explicit" | "trackedDays" = "explicit",
 ): HabitAnalysis {
   const start = shiftDate(date, 1 - rangeDays);
   const days = dateKeys(start, date);
@@ -47,20 +54,57 @@ export function getHabitAnalysis(
   const groups = new Map<number, Entry[]>();
   for (const e of entries)
     groups.set(e.habit_id, [...(groups.get(e.habit_id) ?? []), e]);
-  const items = habits.map((h) => habitItem(h, groups.get(h.id) ?? [], days));
   const series = metricSeries(db, start, date);
+  // Only days with active-habit activity are eligible; never backdate a habit
+  // before its first known record. No persisted rows are changed.
+  const trackedDates = [...new Set(entries.map((e) => e.date))];
+  const firstDates = new Map(
+    (
+      db
+        .prepare(
+          `SELECT e.habit_id, MIN(e.date) first
+    FROM habit_entries e JOIN habit_definitions h ON h.id=e.habit_id
+    WHERE h.is_active=1 GROUP BY e.habit_id`,
+        )
+        .all() as { habit_id: number; first: string }[]
+    ).map((r) => [r.habit_id, r.first]),
+  );
+  const effectiveGroups = new Map<number, Entry[]>();
+  for (const habit of habits) {
+    const explicit = groups.get(habit.id) ?? [];
+    const records = [...explicit];
+    if (comparisonMode === "trackedDays") {
+      const known = new Set(explicit.map((e) => e.date));
+      const first = firstDates.get(habit.id);
+      for (const day of trackedDates)
+        if (first && day >= first && !known.has(day))
+          records.push({
+            habit_id: habit.id,
+            date: day,
+            completed: 0,
+            inferred: true,
+          });
+    }
+    effectiveGroups.set(habit.id, records);
+  }
+  const items = habits.map((h) =>
+    habitItem(h, effectiveGroups.get(h.id) ?? [], days),
+  );
   const correlations: HabitCorrelation[] = [];
   for (const item of items) {
-    // Only explicit yes/no entries participate. Absence means unknown, never a control day.
-    const records = groups.get(item.habitId) ?? [];
+    const records = effectiveGroups.get(item.habitId) ?? [];
     for (const metric of METRICS) {
       const yes: number[] = [],
         no: number[] = [];
+      let inferredComparisonDays = 0;
       for (const e of records) {
         const next = shiftDate(e.date, 1);
         if (next > date) continue;
         const value = series[metric.id].get(next);
-        if (value !== undefined) (e.completed ? yes : no).push(value);
+        if (value !== undefined) {
+          (e.completed ? yes : no).push(value);
+          if (!e.completed && e.inferred) inferredComparisonDays++;
+        }
       }
       if (yes.length < MIN_GROUP || no.length < MIN_GROUP) continue;
       const eventMedian = median(yes)!,
@@ -75,6 +119,7 @@ export function getHabitAnalysis(
         timing: "nextDay",
         eventDays: yes.length,
         comparisonDays: no.length,
+        inferredComparisonDays,
         eventMedian,
         comparisonMedian,
         eventAverage: mean(yes),
@@ -83,7 +128,9 @@ export function getHabitAnalysis(
         confidence:
           Math.min(yes.length, no.length) >= 14 ? "more_data" : "exploratory",
         summary:
-          "Median am Folgetag: erfasstes Ereignis gegenüber ausdrücklich ohne Ereignis. Keine Aussage über die Ursache.",
+          inferredComparisonDays > 0
+            ? "Median am Folgetag mit vermutlich Nein aus nicht angehakten Habits. Keine Aussage über die Ursache."
+            : "Median am Folgetag: erfasstes Ereignis gegenüber ausdrücklich ohne Ereignis. Keine Aussage über die Ursache.",
         quality: "ok",
       });
     }
@@ -105,6 +152,8 @@ export function getHabitAnalysis(
     )
     .get(date) as { date: string | null };
   return {
+    comparisonMode,
+    mindfulness: getMindfulnessSummary(db, start, date),
     date,
     rangeDays,
     startDate: start,
@@ -117,7 +166,9 @@ export function getHabitAnalysis(
     items,
     correlations,
     notes: [
-      "Nur aktive Habits. Fehlende Einträge zählen weder als Ja noch als Nein.",
+      comparisonMode === "trackedDays"
+        ? "Vergleich mit Annahme: Nicht angehakt an einem Tag mit anderen aktiven Habit-Einträgen zählt als vermutlich Nein, erst ab dem ersten bekannten Eintrag dieses Habits. Tage ohne Habit-Erfassung bleiben unbekannt. Originaleinträge bleiben unverändert; abgeleitete Nein-Tage werden in der Tabelle ausgewiesen."
+        : "Nur aktive Habits. Fehlende Einträge zählen weder als Ja noch als Nein.",
       "Verglichen werden Tageswerte am Folgetag, mindestens 7 Mess-Tage je Gruppe. Der Median begrenzt den Einfluss einzelner Ausreißer.",
       "Beobachtete Unterschiede sind keine Wirkungsnachweise. Training, Krankheit, andere Habits und zeitliche Trends können mitwirken.",
       "Kalendertage: Europe/Berlin. Schlaf wird der Nacht vor dem jeweiligen Morgen zugeordnet; überlappende Schlafintervalle werden zusammengeführt.",
@@ -152,6 +203,7 @@ function habitItem(
     isActive: true,
     trackedDays: tracked.size,
     missingDays: days.length - tracked.size,
+    inferredDays: entries.filter((e) => e.inferred).length,
     nonEventDays: tracked.size - events.size,
     eventDays: events.size,
     trackingRate: tracked.size / days.length,

@@ -183,7 +183,8 @@ export function RestingHeartRateCoach({
                 <p>
                   Am Folgetag {s.delta! > 0 ? "+" : ""}
                   {s.delta!.toFixed(1)} bpm im Median. {s.eventDays} Tage mit /{" "}
-                  {s.comparisonDays} ohne Ereignis.
+                  {s.comparisonDays} {s.inferredComparisonDays ? "vermutlich ohne" : "ohne"} Ereignis.
+                  {s.inferredComparisonDays ? ` ${s.inferredComparisonDays} Vergleichstage aus nicht angehakten Habits. Kein Wirkungsnachweis.` : " Kein Wirkungsnachweis."}
                 </p>
                 <span>{habitAction(s.habitName, s.delta!)}</span>
               </div>

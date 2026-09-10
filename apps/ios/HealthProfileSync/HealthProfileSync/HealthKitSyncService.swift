@@ -40,6 +40,10 @@ final class HealthKitSyncService {
             types.insert(sleep)
         }
 
+        if let mindfulness = HKObjectType.categoryType(forIdentifier: .mindfulSession) {
+            types.insert(mindfulness)
+        }
+
         return types
     }
 
@@ -65,11 +69,12 @@ final class HealthKitSyncService {
 
         async let quantitySamples = fetchQuantitySamples(start: start, end: end)
         async let sleepSamples = fetchSleepSamples(start: start, end: end)
+        async let mindfulSamples = fetchMindfulSamples(start: start, end: end)
         async let workouts = fetchWorkouts(start: start, end: end)
 
         return HealthKitSyncPayload(
             deviceName: deviceName,
-            samples: try await quantitySamples + sleepSamples,
+            samples: try await quantitySamples + sleepSamples + mindfulSamples,
             workouts: try await workouts
         )
     }
@@ -123,6 +128,23 @@ final class HealthKitSyncService {
                     metadata: metadata(sample.metadata)
                 )
             }
+    }
+
+    private func fetchMindfulSamples(start: Date, end: Date) async throws -> [HealthSamplePayload] {
+        guard let type = HKObjectType.categoryType(forIdentifier: .mindfulSession) else { return [] }
+        let samples = try await querySamples(type: type, start: start, end: end) as [HKCategorySample]
+        return samples.filter { $0.endDate > $0.startDate }.map { sample in
+            HealthSamplePayload(
+                sourceId: sample.uuid.uuidString,
+                type: "mindfulSession",
+                unit: "min",
+                value: sample.endDate.timeIntervalSince(sample.startDate) / 60,
+                startAt: isoFormatter.string(from: sample.startDate),
+                endAt: isoFormatter.string(from: sample.endDate),
+                sourceName: sample.sourceRevision.source.name,
+                metadata: metadata(sample.metadata)
+            )
+        }
     }
 
     private func fetchWorkouts(start: Date, end: Date) async throws -> [WorkoutPayload] {

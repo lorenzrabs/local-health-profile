@@ -21,7 +21,8 @@ export type HealthSampleType =
   | "activeEnergyBurned"
   | "basalEnergyBurned"
   | "vo2Max"
-  | "sleepAnalysis";
+  | "sleepAnalysis"
+  | "mindfulSession";
 
 export type WorkoutInput = {
   sourceId: string;
@@ -248,6 +249,7 @@ export type HabitAnalysisItem = {
   trackedDays: number;
   missingDays: number;
   nonEventDays: number;
+  inferredDays: number;
   recentRate: number | null;
   previousRate: number | null;
   recentTrackedDays: number;
@@ -278,6 +280,7 @@ export type HabitCorrelation = {
   timing: "sameDay" | "nextDay";
   eventDays: number;
   comparisonDays: number;
+  inferredComparisonDays?: number;
   eventMedian: number | null;
   comparisonMedian: number | null;
   confidence: "exploratory" | "more_data";
@@ -288,7 +291,15 @@ export type HabitCorrelation = {
   quality: "ok" | "insufficient";
 };
 
+export type MindfulnessSummary = {
+  days: { date: string; minutes: number }[];
+  totalMinutes: number;
+  source: "appleHealth";
+};
+
 export type HabitAnalysis = {
+  comparisonMode: "explicit" | "trackedDays";
+  mindfulness: MindfulnessSummary;
   date: IsoDate;
   rangeDays: 30 | 90 | 365;
   startDate: IsoDate;

@@ -1,14 +1,19 @@
 # HealthProfileSync
 
-Minimal SwiftUI companion app for V1 HealthKit sync.
+iPhone companion for the local Health dashboard, HealthKit import and habit sync.
 
-## Run
+## Run / update on the MacBook
 
 1. Open `HealthProfileSync.xcodeproj` in Xcode.
-2. Select your personal/team signing account if Xcode asks.
-3. Run on a physical iPhone because HealthKit data is not available on macOS.
-4. In the web dashboard, create a pairing token.
-5. Paste the server URL and token into the app.
-6. Grant Health permissions and sync the last 30 days.
+2. Keep the existing bundle identifier and select the same signing team used for the installed app. Review local changes before replacing an older checkout.
+3. Connect the iPhone, select it as the target, and Run. Do not delete the existing app or its local data to update it.
+4. Keep the existing pairing if it is still valid. Otherwise create a QR code in the dashboard under iOS koppeln and scan it in the app.
+5. Tap **Health erlauben** and permit **Achtsamkeitsminuten** (plus the previously used types).
+6. For older breathing sessions, tap **Vollsync neu starten**, then **Synchronisieren**. This resets the import cursor, not your Health data. Repeated samples are deduplicated by source UUID.
+7. Open the dashboard’s Habits area: **Atmen / Achtsamkeit** lists the imported dates and minutes.
 
-The app is intentionally sync-only for V1. The main UI remains the local web dashboard.
+The category includes Breathe and other mindful sessions; it is not a verified Breathe-only label. Denied read permission may yield an empty result, so an empty import is not proof that no sessions occurred.
+
+## Validation on the Mac mini
+
+The changed Swift file passed a syntax parse. Xcode and the iOS SDK are not installed there: device compilation, signing and a real HealthKit permission/sync test remain to be completed on the MacBook/iPhone.

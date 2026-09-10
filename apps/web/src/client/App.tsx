@@ -38,6 +38,7 @@ async function get<T>(path: string): Promise<T> {
 }
 export function App() {
   const [date, setDate] = useState(localDate()),
+    [comparisonMode, setComparisonMode] = useState<"explicit" | "trackedDays">("trackedDays"),
     [range, setRange] = useState<30 | 90 | 365>(90),
     [data, setData] = useState<Data | null>(null),
     [error, setError] = useState(""),
@@ -54,7 +55,7 @@ export function App() {
         `/api/dashboard/trends?date=${date}&rangeDays=${range}`,
       ),
       get<HabitAnalysis>(
-        `/api/habits/analysis?date=${date}&rangeDays=${range}`,
+        `/api/habits/analysis?date=${date}&rangeDays=${range}&comparisonMode=${comparisonMode}`,
       ),
       get<Recipe[]>("/api/recipes?servings=1"),
       get<Context>("/api/dashboard/context"),
@@ -74,7 +75,7 @@ export function App() {
     return () => {
       current = false;
     };
-  }, [date, range, revision]);
+  }, [date, range, revision, comparisonMode]);
   async function refresh() {
     setRevision((r) => r + 1);
   }
@@ -213,6 +214,7 @@ export function App() {
             />
             <HabitsSection
               analysis={data.analysis}
+              onComparisonModeChanged={setComparisonMode}
               initialHabits={data.dashboard.habits}
               today={date}
               onTodayChanged={refresh}

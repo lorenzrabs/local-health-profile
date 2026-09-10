@@ -20,8 +20,10 @@ export function HabitsSection({
   initialHabits,
   today,
   onTodayChanged,
+  onComparisonModeChanged,
 }: {
   analysis: HabitAnalysis;
+  onComparisonModeChanged: (mode: "explicit" | "trackedDays") => void;
   initialHabits: HabitDay;
   today: string;
   onTodayChanged: () => Promise<void>;
@@ -144,8 +146,11 @@ export function HabitsSection({
               </summary>
               <div className="habit-row-detail">
                 <p>
-                  {h.eventDays} Ja · {h.nonEventDays} Nein · {h.missingDays}{" "}
-                  Tage ohne Eintrag.{" "}
+                  {h.eventDays} Ja · {h.nonEventDays} Nein
+                  {h.inferredDays
+                    ? ` (davon ${h.inferredDays} aus nicht angehakt)`
+                    : ""}{" "}
+                  · {h.missingDays} Tage ohne Eintrag.{" "}
                   {h.trackedDays > 0
                     ? `${Math.round(h.eventRate * 100)}% Ja unter den erfassten Tagen.`
                     : "Noch keine Auswertung möglich."}
@@ -177,16 +182,32 @@ export function HabitsSection({
             </div>
           )}
           <div className="table-foot">
-            Fehlende Einträge bleiben unbekannt. Archivierte Habits werden nicht
-            ausgewertet.
+            {analysis.comparisonMode === "trackedDays"
+              ? "Leere Habits an erfassten Tagen zählen ab dem ersten bekannten Eintrag als vermutlich Nein. Tage ohne Erfassung bleiben offen."
+              : "Fehlende Einträge bleiben unbekannt."}{" "}
+            Archivierte Habits werden nicht ausgewertet.
           </div>
         </div>
         <aside className="insights-panel">
           <div className="section-kicker">AM FOLGETAG</div>
           <h3>Muster entdecken.</h3>
           <p className="muted-text">
-            Mit Ereignis und ohne Ereignis – nur ausdrücklich erfasste Tage.
+            {analysis.comparisonMode === "trackedDays"
+              ? "An erfassten Tagen: angehakt gegenüber vermutlich nicht gemacht."
+              : "Mit Ereignis und ohne Ereignis – nur ausdrücklich erfasste Tage."}
           </p>
+          <label className="comparison-assumption">
+            <input
+              type="checkbox"
+              checked={analysis.comparisonMode === "trackedDays"}
+              onChange={(e) =>
+                onComparisonModeChanged(
+                  e.target.checked ? "trackedDays" : "explicit",
+                )
+              }
+            />
+            Leer an erfassten Tagen = nicht gemacht
+          </label>
           <CorrelationList correlations={analysis.correlations} />
           <details className="method-note">
             <summary>So rechnen wir</summary>
@@ -196,6 +217,58 @@ export function HabitsSection({
           </details>
         </aside>
       </div>
+      <details
+        className="mindfulness-habit"
+        open={analysis.mindfulness.days.length === 0}
+      >
+        <summary>
+          <span>
+            <b>Atmen / Achtsamkeit</b>
+            <small>Automatisch aus Apple Health</small>
+          </span>
+          <span>
+            {analysis.mindfulness.days.length > 0
+              ? `${analysis.mindfulness.days.length} Tage · ${Math.round(analysis.mindfulness.totalMinutes)} Min.`
+              : "Import vorbereiten"}
+          </span>
+        </summary>
+        <div className="mindfulness-body">
+          {analysis.mindfulness.days.length === 0 ? (
+            <p>
+              Noch keine Achtsamkeitssitzungen im gewählten Zeitraum importiert.
+              Die aktualisierte iPhone-Sync-App installieren, „Health erlauben“
+              öffnen und Achtsamkeitsminuten freigeben. Danach „Vollsync neu
+              starten“ und „Synchronisieren“, um auch frühere Atemübungen zu
+              übernehmen.
+            </p>
+          ) : (
+            <div className="mindfulness-days">
+              {analysis.mindfulness.days.map((d) => (
+                <div key={d.date}>
+                  <time dateTime={d.date}>
+                    {new Intl.DateTimeFormat("de-DE", {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                    }).format(new Date(d.date + "T12:00:00Z"))}
+                  </time>
+                  <b>
+                    {d.minutes.toLocaleString("de-DE", {
+                      maximumFractionDigits: 1,
+                    })}{" "}
+                    Min.
+                  </b>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="muted-text">
+            Apple Health fasst Atmen und weitere Achtsamkeitssitzungen zusammen.
+            Überlappende Minuten zählen einmal. Tage ohne importierte Sitzung
+            bleiben unbekannt und werden nicht als „Nein“ gewertet.
+          </p>
+        </div>
+      </details>
       <details className="entry-editor">
         <summary>
           <SlidersHorizontal size={16} /> Einträge bearbeiten{" "}
@@ -307,7 +380,7 @@ function CorrelationList({
       {selected.length === 0 ? (
         <div className="empty-state">
           <span className="empty-symbol">↗</span>
-          <b>Noch kein belastbarer Vergleich</b>
+          <b>Noch zu wenige Vergleichstage</b>
           <p>
             Mindestens 7 gemessene Folgetage nach „Ja“ und 7 nach „Nein“ nötig.
             Weitere Einträge machen die Auswertung aussagekräftiger.
@@ -329,8 +402,16 @@ function CorrelationList({
                 <small>{c.eventDays} Messtage</small>
               </span>
               <span>
-                Ohne Ereignis <b>{c.comparisonMedian!.toFixed(1)}</b>
-                <small>{c.comparisonDays} Messtage</small>
+                {c.inferredComparisonDays
+                  ? "Vermutlich ohne Ereignis"
+                  : "Ohne Ereignis"}{" "}
+                <b>{c.comparisonMedian!.toFixed(1)}</b>
+                <small>
+                  {c.comparisonDays} Messtage
+                  {c.inferredComparisonDays
+                    ? ` · ${c.inferredComparisonDays} aus nicht angehakt`
+                    : ""}
+                </small>
               </span>
             </div>
             <p>
@@ -353,7 +434,8 @@ function CorrelationList({
       )}
       {selected.length > 0 && (
         <p className="association-note">
-          Beobachteter Unterschied, kein Wirkungsnachweis.
+          Beobachteter Unterschied, kein Wirkungsnachweis. Vergessene Einträge,
+          andere Habits und zeitliche Veränderungen können das Muster erklären.
         </p>
       )}
     </>

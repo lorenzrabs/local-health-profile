@@ -34,7 +34,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Health Profile liest Schlaf, Herzfrequenz, Aktivität und Workouts, um dein lokales Dashboard zu aktualisieren.</string>
+	<string>Health Profile liest Schlaf, Herzfrequenz, Aktivität, Workouts und Achtsamkeitsminuten, um dein lokales Dashboard zu aktualisieren.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Health Profile schreibt in V1 keine Health-Daten, benötigt aber eine transparente Beschreibung für mögliche spätere Sync-Funktionen.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

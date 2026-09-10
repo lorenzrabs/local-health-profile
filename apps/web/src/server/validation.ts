@@ -17,7 +17,8 @@ export const healthSampleSchema = z.object({
     "activeEnergyBurned",
     "basalEnergyBurned",
     "vo2Max",
-    "sleepAnalysis"
+    "sleepAnalysis",
+    "mindfulSession"
   ]),
   unit: z.string().min(1),
   value: z.number(),
