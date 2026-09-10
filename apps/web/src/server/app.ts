@@ -1,3 +1,4 @@
+import { localDate } from "../shared/dates";
 import express from "express";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -78,6 +79,13 @@ export async function createApp(
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, service: "health-profile", time: new Date().toISOString() });
+  });
+
+  app.get("/api/dashboard/context", (_req,res) => {
+    const sample = db.prepare("SELECT MAX(start_at) AS value FROM health_samples").get() as {value:string|null};
+    const habit = db.prepare("SELECT MAX(e.date) AS value FROM habit_entries e JOIN habit_definitions h ON h.id=e.habit_id WHERE h.is_active=1").get() as {value:string|null};
+    const sync = db.prepare("SELECT MAX(last_synced_at) AS value FROM sync_state").get() as {value:string|null};
+    res.json({lastHealthDate:sample.value ? localDate(sample.value) : null,lastHabitDate:habit.value,lastSyncAt:sync.value});
   });
 
   app.get("/api/pairing", async (_req, res, next) => {

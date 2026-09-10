@@ -1,371 +1,253 @@
-import type { HabitAnalysis, HabitAnalysisItem, HabitCorrelation, HabitCorrelationMetric } from "../shared/types";
+import type {
+  HabitAnalysis,
+  HabitAnalysisItem,
+  HabitCorrelation,
+  HabitCorrelationMetric,
+} from "../shared/types";
+import { dateKeys, localDate, localInstant, shiftDate } from "../shared/dates";
 import type { AppDatabase } from "./db";
 
-type RangeDays = HabitAnalysis["rangeDays"];
 type HabitRow = {
   id: number;
   client_id: string | null;
   name: string;
-  sort_order: number;
   is_active: number;
 };
-type EntryRow = {
-  habit_id: number;
-  habit_client_id: string | null;
-  date: string;
-  completed: number;
-};
-type PointRow = { date: string; value: number | null };
+type Entry = { habit_id: number; date: string; completed: number };
+const MIN_GROUP = 7;
+const METRICS = [
+  {
+    id: "resting_hr",
+    label: "Ruhepuls",
+    unit: "bpm",
+    type: "restingHeartRate",
+  },
+  { id: "hrv", label: "HRV", unit: "ms", type: "heartRateVariabilitySDNN" },
+  { id: "sleep", label: "Schlafdauer", unit: "h", type: "sleepAnalysis" },
+] as const;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const MIN_EVENT_VALUES = 3;
-const MIN_COMPARISON_VALUES = 10;
-
-const METRICS: Array<{ id: HabitCorrelationMetric; label: string; unit: string }> = [
-  { id: "resting_hr", label: "Ruhepuls", unit: "bpm" },
-  { id: "hrv", label: "HRV", unit: "ms" },
-  { id: "sleep", label: "Schlaf", unit: "h" },
-  { id: "steps", label: "Schritte", unit: "" },
-  { id: "active_energy", label: "Aktive Energie", unit: "kcal" },
-  { id: "running_distance", label: "Laufdistanz", unit: "km" }
-];
-
-export function getHabitAnalysis(db: AppDatabase, rangeDays: RangeDays = 90, date = toDateKey(new Date())): HabitAnalysis {
-  const end = new Date(`${date}T00:00:00.000Z`);
-  const start = addDays(end, -rangeDays + 1);
-  const days = dateRange(start, end);
-  const habits = queryHabits(db);
-  const entries = queryEntries(db, start, end);
-  const entriesByHabit = groupEntries(entries);
-  const metricSeries = buildMetricSeries(db, start, addDays(end, 2));
-  const items = habits.map((habit) => buildHabitItem(habit, entriesByHabit.get(habit.id) ?? [], days));
-
-  return {
-    date,
-    rangeDays,
-    startDate: toDateKey(start),
-    endDate: date,
-    generatedAt: new Date().toISOString(),
-    totalDays: days.length,
-    items,
-    correlations: buildCorrelations(items, days, metricSeries).slice(0, 24),
-    notes: [
-      "Toggle an bedeutet in dieser V1-Analyse: Ereignis passiert.",
-      "Zusammenhänge sind deskriptive Korrelationen, keine Ursache-Wirkung-Aussagen.",
-      "Korrelationen werden nur bei ausreichender Anzahl an Ereignis- und Vergleichstagen angezeigt."
-    ]
-  };
-}
-
-function queryHabits(db: AppDatabase) {
-  return db
+export function getHabitAnalysis(
+  db: AppDatabase,
+  rangeDays: HabitAnalysis["rangeDays"] = 90,
+  date = localDate(),
+): HabitAnalysis {
+  const start = shiftDate(date, 1 - rangeDays);
+  const days = dateKeys(start, date);
+  const habits = db
     .prepare(
-      `SELECT id, client_id, name, sort_order, is_active
-       FROM habit_definitions
-       ORDER BY sort_order, id`
+      "SELECT id, client_id, name, is_active FROM habit_definitions WHERE is_active = 1 ORDER BY sort_order, id",
     )
     .all() as HabitRow[];
-}
-
-function queryEntries(db: AppDatabase, start: Date, end: Date) {
-  return db
+  const entries = db
     .prepare(
-      `SELECT habit_entries.habit_id, habit_definitions.client_id AS habit_client_id,
-              habit_entries.date, habit_entries.completed
-       FROM habit_entries
-       JOIN habit_definitions ON habit_definitions.id = habit_entries.habit_id
-       WHERE habit_entries.date >= ?
-         AND habit_entries.date <= ?
-       ORDER BY habit_entries.date`
+      `SELECT e.habit_id, e.date, e.completed FROM habit_entries e
+    JOIN habit_definitions h ON h.id=e.habit_id WHERE h.is_active=1 AND e.date BETWEEN ? AND ? ORDER BY e.date`,
     )
-    .all(toDateKey(start), toDateKey(end)) as EntryRow[];
-}
-
-function buildHabitItem(habit: HabitRow, entries: EntryRow[], days: string[]): HabitAnalysisItem {
-  const trackedDates = new Set(entries.map((entry) => entry.date));
-  const eventDates = new Set(entries.filter((entry) => Boolean(entry.completed)).map((entry) => entry.date));
-  const streaks = calculateStreaks(days, eventDates);
-
-  return {
-    habitId: habit.id,
-    clientId: habit.client_id ?? `server-${habit.id}`,
-    name: habit.name,
-    isActive: Boolean(habit.is_active),
-    trackedDays: trackedDates.size,
-    eventDays: eventDates.size,
-    trackingRate: days.length > 0 ? trackedDates.size / days.length : 0,
-    eventRate: days.length > 0 ? eventDates.size / days.length : 0,
-    currentStreak: streaks.current,
-    longestStreak: streaks.longest,
-    lastEventDate: [...eventDates].sort().at(-1) ?? null,
-    weekdays: weekdayPattern(days, eventDates)
-  };
-}
-
-function buildCorrelations(
-  items: HabitAnalysisItem[],
-  days: string[],
-  metricSeries: Record<HabitCorrelationMetric, Map<string, number>>
-): HabitCorrelation[] {
-  return items
-    .flatMap((item) => buildItemCorrelations(item, days, metricSeries))
-    .sort((left, right) => correlationScore(right) - correlationScore(left));
-}
-
-function buildItemCorrelations(
-  item: HabitAnalysisItem,
-  days: string[],
-  metricSeries: Record<HabitCorrelationMetric, Map<string, number>>
-) {
-  const eventDates = new Set(itemEventDatesCache.get(item.clientId) ?? []);
-  const result: HabitCorrelation[] = [];
-  if (eventDates.size === 0) return result;
-
-  for (const timing of ["sameDay", "nextDay"] as const) {
+    .all(start, date) as Entry[];
+  const groups = new Map<number, Entry[]>();
+  for (const e of entries)
+    groups.set(e.habit_id, [...(groups.get(e.habit_id) ?? []), e]);
+  const items = habits.map((h) => habitItem(h, groups.get(h.id) ?? [], days));
+  const series = metricSeries(db, start, date);
+  const correlations: HabitCorrelation[] = [];
+  for (const item of items) {
+    // Only explicit yes/no entries participate. Absence means unknown, never a control day.
+    const records = groups.get(item.habitId) ?? [];
     for (const metric of METRICS) {
-      const values = metricSeries[metric.id];
-      const eventValues: number[] = [];
-      const comparisonValues: number[] = [];
-
-      for (const day of days) {
-        const metricDate = timing === "nextDay" ? addDaysKey(day, 1) : day;
-        const value = values.get(metricDate);
-        if (value === undefined || value === null) continue;
-        if (eventDates.has(day)) {
-          eventValues.push(value);
-        } else {
-          comparisonValues.push(value);
-        }
+      const yes: number[] = [],
+        no: number[] = [];
+      for (const e of records) {
+        const next = shiftDate(e.date, 1);
+        if (next > date) continue;
+        const value = series[metric.id].get(next);
+        if (value !== undefined) (e.completed ? yes : no).push(value);
       }
-
-      const eventAverage = average(eventValues);
-      const comparisonAverage = average(comparisonValues);
-      const hasEnough = eventValues.length >= MIN_EVENT_VALUES && comparisonValues.length >= MIN_COMPARISON_VALUES;
-      const delta = hasEnough && eventAverage !== null && comparisonAverage !== null ? eventAverage - comparisonAverage : null;
-
-      result.push({
+      if (yes.length < MIN_GROUP || no.length < MIN_GROUP) continue;
+      const eventMedian = median(yes)!,
+        comparisonMedian = median(no)!;
+      const delta = eventMedian - comparisonMedian;
+      correlations.push({
         habitClientId: item.clientId,
         habitName: item.name,
         metric: metric.id,
         metricLabel: metric.label,
         unit: metric.unit,
-        timing,
-        eventDays: eventValues.length,
-        comparisonDays: comparisonValues.length,
-        eventAverage: hasEnough ? eventAverage : null,
-        comparisonAverage: hasEnough ? comparisonAverage : null,
+        timing: "nextDay",
+        eventDays: yes.length,
+        comparisonDays: no.length,
+        eventMedian,
+        comparisonMedian,
+        eventAverage: mean(yes),
+        comparisonAverage: mean(no),
         delta,
+        confidence:
+          Math.min(yes.length, no.length) >= 14 ? "more_data" : "exploratory",
         summary:
-          hasEnough && delta !== null
-            ? `${timing === "nextDay" ? "Am Folgetag" : "Am selben Tag"} von ${item.name}: ${formatSigned(delta, metric.unit)} vs. Vergleichstage.`
-            : `Zu wenig Daten für ${item.name} × ${metric.label}.`,
-        quality: hasEnough ? "ok" : "insufficient"
+          "Median am Folgetag: erfasstes Ereignis gegenüber ausdrücklich ohne Ereignis. Keine Aussage über die Ursache.",
+        quality: "ok",
       });
     }
   }
-
-  return result.filter((correlation) => correlation.quality === "ok");
-}
-
-const itemEventDatesCache = new Map<string, string[]>();
-
-function groupEntries(entries: EntryRow[]) {
-  itemEventDatesCache.clear();
-  const groups = new Map<number, EntryRow[]>();
-  const eventsByClientId = new Map<string, Set<string>>();
-  for (const entry of entries) {
-    const current = groups.get(entry.habit_id) ?? [];
-    current.push(entry);
-    groups.set(entry.habit_id, current);
-    if (entry.completed && entry.habit_client_id) {
-      const events = eventsByClientId.get(entry.habit_client_id) ?? new Set<string>();
-      events.add(entry.date);
-      eventsByClientId.set(entry.habit_client_id, events);
-    }
-  }
-  for (const [clientId, dates] of eventsByClientId) {
-    itemEventDatesCache.set(clientId, [...dates]);
-  }
-  return groups;
-}
-
-function buildMetricSeries(db: AppDatabase, start: Date, endExclusive: Date): Record<HabitCorrelationMetric, Map<string, number>> {
-  return {
-    resting_hr: rowsToMap(queryDailySampleAvg(db, "restingHeartRate", start, endExclusive)),
-    hrv: rowsToMap(queryDailySampleAvg(db, "heartRateVariabilitySDNN", start, endExclusive)),
-    sleep: rowsToMap(sleepSeries(db, start, addDays(endExclusive, -1))),
-    steps: rowsToMap(queryDailySampleSum(db, "stepCount", start, endExclusive)),
-    active_energy: rowsToMap(queryDailySampleSum(db, "activeEnergyBurned", start, endExclusive)),
-    running_distance: rowsToMap(queryDailyWorkoutDistance(db, start, endExclusive))
-  };
-}
-
-function queryDailySampleAvg(db: AppDatabase, type: string, start: Date, endExclusive: Date) {
-  return db
-    .prepare(
-      `SELECT date(start_at) AS date, AVG(value) AS value
-       FROM health_samples
-       WHERE type = ?
-         AND start_at >= ?
-         AND start_at < ?
-       GROUP BY date(start_at)`
-    )
-    .all(type, toIso(start), toIso(endExclusive)) as PointRow[];
-}
-
-function queryDailySampleSum(db: AppDatabase, type: string, start: Date, endExclusive: Date) {
-  return db
-    .prepare(
-      `SELECT date(start_at) AS date, SUM(value) AS value
-       FROM health_samples
-       WHERE type = ?
-         AND start_at >= ?
-         AND start_at < ?
-       GROUP BY date(start_at)`
-    )
-    .all(type, toIso(start), toIso(endExclusive)) as PointRow[];
-}
-
-function queryDailyWorkoutDistance(db: AppDatabase, start: Date, endExclusive: Date) {
-  return db
-    .prepare(
-      `SELECT date(start_at) AS date, SUM(COALESCE(distance_m, 0)) / 1000.0 AS value
-       FROM workouts
-       WHERE lower(activity_type) LIKE '%running%'
-         AND start_at >= ?
-         AND start_at < ?
-       GROUP BY date(start_at)`
-    )
-    .all(toIso(start), toIso(endExclusive)) as PointRow[];
-}
-
-function sleepSeries(db: AppDatabase, start: Date, end: Date): PointRow[] {
-  const points: PointRow[] = [];
-  for (const date of dateRange(start, end)) {
-    const day = new Date(`${date}T00:00:00.000Z`);
-    points.push({ date, value: getSleepHours(db, addHours(day, -6), addHours(day, 14)) });
-  }
-  return points;
-}
-
-function getSleepHours(db: AppDatabase, start: Date, end: Date) {
-  const rows = db
-    .prepare(
-      `SELECT start_at, end_at FROM health_samples
-       WHERE type = 'sleepAnalysis'
-         AND value IN (1, 3, 4, 5)
-         AND start_at < ?
-         AND end_at > ?
-       ORDER BY start_at`
-    )
-    .all(toIso(end), toIso(start)) as { start_at: string; end_at: string }[];
-  if (rows.length === 0) return null;
-
-  const windowStart = start.getTime();
-  const windowEnd = end.getTime();
-  const intervals = rows
-    .map((row) => ({
-      start: Math.max(new Date(row.start_at).getTime(), windowStart),
-      end: Math.min(new Date(row.end_at).getTime(), windowEnd)
-    }))
-    .filter((interval) => interval.end > interval.start)
-    .sort((left, right) => left.start - right.start);
-  const merged = intervals.reduce<{ start: number; end: number }[]>((acc, interval) => {
-    const current = acc.at(-1);
-    if (!current || interval.start > current.end) {
-      acc.push({ ...interval });
-    } else {
-      current.end = Math.max(current.end, interval.end);
-    }
-    return acc;
-  }, []);
-  return merged.reduce((sum, interval) => sum + interval.end - interval.start, 0) / (60 * 60 * 1000);
-}
-
-function calculateStreaks(days: string[], eventDates: Set<string>) {
-  let current = 0;
-  let longest = 0;
-  let running = 0;
-  for (const day of days) {
-    if (eventDates.has(day)) {
-      running += 1;
-      longest = Math.max(longest, running);
-    } else {
-      running = 0;
-    }
-  }
-  for (let index = days.length - 1; index >= 0; index -= 1) {
-    if (!eventDates.has(days[index])) break;
-    current += 1;
-  }
-  return { current, longest };
-}
-
-function weekdayPattern(days: string[], eventDates: Set<string>) {
-  return Array.from({ length: 7 }, (_, weekday) => {
-    const matchingDays = days.filter((day) => new Date(`${day}T12:00:00`).getDay() === weekday);
-    const eventDays = matchingDays.filter((day) => eventDates.has(day)).length;
-    return {
-      weekday,
-      label: ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][weekday],
-      eventDays,
-      totalDays: matchingDays.length,
-      eventRate: matchingDays.length > 0 ? eventDays / matchingDays.length : 0
-    };
-  });
-}
-
-function dateRange(start: Date, end: Date) {
-  const days: string[] = [];
-  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
-    days.push(toDateKey(cursor));
-  }
-  return days;
-}
-
-function rowsToMap(rows: PointRow[]) {
-  return new Map(rows.filter((row) => row.value !== null).map((row) => [row.date, Number(row.value)]));
-}
-
-function average(values: number[]) {
-  if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function formatSigned(value: number, unit: string) {
-  const formatted = Math.abs(value) >= 100 ? Math.round(value).toLocaleString("de-DE") : value.toFixed(1);
-  return `${value >= 0 ? "+" : "-"}${formatted.replace("-", "")}${unit ? ` ${unit}` : ""}`;
-}
-
-function correlationScore(correlation: HabitCorrelation) {
-  if (correlation.delta === null) return 0;
-  const scale: Record<HabitCorrelationMetric, number> = {
+  const metricWeight: Partial<Record<HabitCorrelationMetric, number>> = {
     resting_hr: 1,
     hrv: 5,
     sleep: 0.25,
-    steps: 1000,
-    active_energy: 100,
-    running_distance: 1
   };
-  return Math.abs(correlation.delta) / scale[correlation.metric];
+  correlations.sort(
+    (a, b) =>
+      Math.abs(b.delta ?? 0) / (metricWeight[b.metric] ?? 1) -
+      Math.abs(a.delta ?? 0) / (metricWeight[a.metric] ?? 1),
+  );
+  const last = db
+    .prepare(
+      `SELECT MAX(e.date) AS date FROM habit_entries e JOIN habit_definitions h ON h.id=e.habit_id
+    WHERE h.is_active=1 AND e.date<=?`,
+    )
+    .get(date) as { date: string | null };
+  return {
+    date,
+    rangeDays,
+    startDate: start,
+    endDate: date,
+    generatedAt: new Date().toISOString(),
+    lastTrackedDate: last.date,
+    recordedDays: new Set(entries.map((e) => e.date)).size,
+    minimumGroupSize: MIN_GROUP,
+    totalDays: days.length,
+    items,
+    correlations,
+    notes: [
+      "Nur aktive Habits. Fehlende Einträge zählen weder als Ja noch als Nein.",
+      "Verglichen werden Tageswerte am Folgetag, mindestens 7 Mess-Tage je Gruppe. Der Median begrenzt den Einfluss einzelner Ausreißer.",
+      "Beobachtete Unterschiede sind keine Wirkungsnachweise. Training, Krankheit, andere Habits und zeitliche Trends können mitwirken.",
+      "Kalendertage: Europe/Berlin. Schlaf wird der Nacht vor dem jeweiligen Morgen zugeordnet; überlappende Schlafintervalle werden zusammengeführt.",
+    ],
+  };
 }
 
-function addDaysKey(date: string, days: number) {
-  return toDateKey(addDays(new Date(`${date}T00:00:00.000Z`), days));
+function habitItem(
+  h: HabitRow,
+  entries: Entry[],
+  days: string[],
+): HabitAnalysisItem {
+  const events = new Set(entries.filter((e) => e.completed).map((e) => e.date));
+  const tracked = new Set(entries.map((e) => e.date));
+  let streak = 0,
+    longest = 0;
+  for (const d of days) {
+    streak = events.has(d) ? streak + 1 : 0;
+    longest = Math.max(longest, streak);
+  }
+  const end = days.at(-1)!;
+  const recent = entries.filter((e) => e.date >= shiftDate(end, -6));
+  const previous = entries.filter(
+    (e) => e.date >= shiftDate(end, -13) && e.date < shiftDate(end, -6),
+  );
+  const rate = (rows: Entry[]) =>
+    rows.length ? rows.filter((e) => e.completed).length / rows.length : null;
+  return {
+    habitId: h.id,
+    clientId: h.client_id ?? `server-${h.id}`,
+    name: h.name,
+    isActive: true,
+    trackedDays: tracked.size,
+    missingDays: days.length - tracked.size,
+    nonEventDays: tracked.size - events.size,
+    eventDays: events.size,
+    trackingRate: tracked.size / days.length,
+    eventRate: rate(entries) ?? 0,
+    currentStreak: streak,
+    longestStreak: longest,
+    lastEventDate: [...events].sort().at(-1) ?? null,
+    recentRate: rate(recent),
+    previousRate: rate(previous),
+    recentTrackedDays: recent.length,
+    previousTrackedDays: previous.length,
+    weekdays: [1, 2, 3, 4, 5, 6, 0].map((weekday) => {
+      const recorded = days.filter(
+        (d) =>
+          tracked.has(d) && new Date(`${d}T12:00:00Z`).getUTCDay() === weekday,
+      );
+      const eventDays = recorded.filter((d) => events.has(d)).length;
+      return {
+        weekday,
+        label: ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][weekday],
+        eventDays,
+        totalDays: recorded.length,
+        eventRate: recorded.length ? eventDays / recorded.length : 0,
+      };
+    }),
+  };
 }
 
-function addDays(date: Date, days: number) {
-  return new Date(date.getTime() + days * DAY_MS);
+function metricSeries(db: AppDatabase, start: string, end: string) {
+  const result: Record<"resting_hr" | "hrv" | "sleep", Map<string, number>> = {
+    resting_hr: new Map(),
+    hrv: new Map(),
+    sleep: new Map(),
+  };
+  for (const metric of METRICS.filter((m) => m.id !== "sleep")) {
+    const rows = db
+      .prepare(
+        `SELECT start_at, value FROM health_samples WHERE type=? AND start_at>=? AND start_at<? ORDER BY start_at`,
+      )
+      .all(
+        metric.type,
+        localInstant(start),
+        localInstant(shiftDate(end, 1)),
+      ) as { start_at: string; value: number }[];
+    const groups = new Map<string, number[]>();
+    for (const row of rows) {
+      if (!Number.isFinite(row.value) || row.value <= 0) continue;
+      const day = localDate(row.start_at);
+      groups.set(day, [...(groups.get(day) ?? []), row.value]);
+    }
+    for (const [day, values] of groups)
+      result[metric.id].set(day, mean(values)!);
+  }
+  // One indexed read, instead of a separate database query for every night.
+  const sleeps = db
+    .prepare(
+      `SELECT start_at,end_at FROM health_samples WHERE type='sleepAnalysis' AND value IN (1,3,4,5)
+    AND start_at<? AND end_at>? ORDER BY start_at`,
+    )
+    .all(localInstant(end, 14), localInstant(shiftDate(start, -1), 18)) as {
+    start_at: string;
+    end_at: string;
+  }[];
+  for (const day of dateKeys(start, end)) {
+    const lo = Date.parse(localInstant(shiftDate(day, -1), 18)),
+      hi = Date.parse(localInstant(day, 14));
+    const intervals = sleeps
+      .map((s) => [
+        Math.max(lo, Date.parse(s.start_at)),
+        Math.min(hi, Date.parse(s.end_at)),
+      ])
+      .filter(([a, b]) => b > a)
+      .sort((a, b) => a[0] - b[0]);
+    let total = 0,
+      left = 0,
+      right = 0;
+    for (const [a, b] of intervals) {
+      if (a > right) {
+        total += right - left;
+        left = a;
+        right = b;
+      } else right = Math.max(right, b);
+    }
+    total += right - left;
+    if (intervals.length) result.sleep.set(day, total / 3600000);
+  }
+  return result;
 }
-
-function addHours(date: Date, hours: number) {
-  return new Date(date.getTime() + hours * 60 * 60 * 1000);
+function mean(values: number[]) {
+  return values.length
+    ? values.reduce((a, b) => a + b, 0) / values.length
+    : null;
 }
-
-function toDateKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function toIso(date: Date) {
-  return date.toISOString();
+export function median(values: number[]) {
+  if (!values.length) return null;
+  const v = [...values].sort((a, b) => a - b);
+  const n = Math.floor(v.length / 2);
+  return v.length % 2 ? v[n] : (v[n - 1] + v[n]) / 2;
 }

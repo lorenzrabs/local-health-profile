@@ -99,6 +99,10 @@ export type RestingHeartRateCoach = {
   status: "missing" | "best_phase" | "recovered" | "stable" | "elevated" | "high";
   statusLabel: string;
   latest: number | null;
+  latestDate: IsoDate | null;
+  sevenDaySampleDays: number;
+  baselineSampleDays: number;
+  history: TrendPoint[];
   sevenDayAverage: number | null;
   baseline28DayAverage: number | null;
   ninetyDayAverage: number | null;
@@ -242,6 +246,12 @@ export type HabitAnalysisItem = {
   name: string;
   isActive: boolean;
   trackedDays: number;
+  missingDays: number;
+  nonEventDays: number;
+  recentRate: number | null;
+  previousRate: number | null;
+  recentTrackedDays: number;
+  previousTrackedDays: number;
   eventDays: number;
   trackingRate: number;
   eventRate: number;
@@ -268,6 +278,9 @@ export type HabitCorrelation = {
   timing: "sameDay" | "nextDay";
   eventDays: number;
   comparisonDays: number;
+  eventMedian: number | null;
+  comparisonMedian: number | null;
+  confidence: "exploratory" | "more_data";
   eventAverage: number | null;
   comparisonAverage: number | null;
   delta: number | null;
@@ -281,6 +294,9 @@ export type HabitAnalysis = {
   startDate: IsoDate;
   endDate: IsoDate;
   generatedAt: IsoDateTime;
+  lastTrackedDate: IsoDate | null;
+  recordedDays: number;
+  minimumGroupSize: number;
   totalDays: number;
   items: HabitAnalysisItem[];
   correlations: HabitCorrelation[];

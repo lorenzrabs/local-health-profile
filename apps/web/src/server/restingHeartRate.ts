@@ -1,3 +1,4 @@
+import { localDate, localInstant, shiftDate } from "../shared/dates";
 import type { DailyCheckIn, RestingHeartRateCoach, TrendPoint } from "../shared/types";
 import type { AppDatabase } from "./db";
 
@@ -14,15 +15,17 @@ export function getRestingHeartRateCoach(
   const dayStart = new Date(`${date}T00:00:00.000Z`);
   const endExclusive = addDays(dayStart, 1);
   const sevenDayStart = addDays(dayStart, -6);
-  const baselineStart = addDays(dayStart, -27);
+  const baselineStart = addDays(dayStart, -34);
   const ninetyDayStart = addDays(dayStart, -89);
 
   const points90 = dailyRestingHeartRateSeries(db, ninetyDayStart, dayStart);
-  const points28 = points90.filter((point) => point.date >= toDateKey(baselineStart));
+  const points28 = points90.filter((point) => point.date >= toDateKey(baselineStart) && point.date < toDateKey(sevenDayStart));
   const points7 = points90.filter((point) => point.date >= toDateKey(sevenDayStart));
   const latest = latestRestingHeartRate(db, ninetyDayStart, endExclusive);
-  const sevenDayAverage = avgPoints(points7);
-  const baseline28DayAverage = avgPoints(points28);
+  const sevenDaySampleDays = points7.filter(p => p.value !== null).length;
+  const baselineSampleDays = points28.filter(p => p.value !== null).length;
+  const sevenDayAverage = sevenDaySampleDays >= 4 ? avgPoints(points7) : null;
+  const baseline28DayAverage = baselineSampleDays >= 14 ? avgPoints(points28) : null;
   const ninetyDayAverage = avgPoints(points90);
   const bestSevenDayAverage = bestRollingAverage(points90, 7, 4);
   const trend90DayDelta = deltaBetweenWindows(points90, 14);
@@ -48,6 +51,8 @@ export function getRestingHeartRateCoach(
     status,
     statusLabel: labelForStatus(status),
     latest,
+    latestDate: points90.filter(p => p.value !== null).at(-1)?.date ?? null,
+    sevenDaySampleDays, baselineSampleDays, history: points90,
     sevenDayAverage,
     baseline28DayAverage,
     ninetyDayAverage,
@@ -69,18 +74,12 @@ export function getRestingHeartRateCoach(
 }
 
 export function dailyRestingHeartRateSeries(db: AppDatabase, start: Date, end: Date): TrendPoint[] {
-  const rows = db
-    .prepare(
-      `SELECT date(start_at) AS date, AVG(value) AS value
-       FROM health_samples
-       WHERE type = 'restingHeartRate'
-         AND start_at >= ?
-         AND start_at < ?
-       GROUP BY date(start_at)`
-    )
-    .all(toIso(start), toIso(addDays(end, 1))) as PointRow[];
-
-  const values = new Map(rows.map((row) => [row.date, row.value]));
+  const rows = db.prepare(`SELECT start_at, value FROM health_samples WHERE type='restingHeartRate'
+    AND start_at >= ? AND start_at < ? AND value > 0 ORDER BY start_at`)
+    .all(localInstant(toDateKey(start)),localInstant(shiftDate(toDateKey(end),1))) as {start_at:string,value:number}[];
+  const grouped = new Map<string,number[]>();
+  for (const row of rows) { const day=localDate(row.start_at); grouped.set(day,[...(grouped.get(day)??[]),row.value]); }
+  const values = new Map([...grouped].map(([day,v])=>[day,v.reduce((a,b)=>a+b,0)/v.length]));
   const points: TrendPoint[] = [];
   for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
     const date = toDateKey(cursor);
@@ -127,7 +126,7 @@ function latestRestingHeartRate(db: AppDatabase, start: Date, end: Date) {
        ORDER BY start_at DESC
        LIMIT 1`
     )
-    .get(toIso(start), toIso(end)) as NumberRow | undefined;
+    .get(localInstant(toDateKey(start)), localInstant(toDateKey(end))) as NumberRow | undefined;
   return row?.value ?? null;
 }
 

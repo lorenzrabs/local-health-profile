@@ -87,11 +87,11 @@ function restingHrCard(
   return {
     id: "resting_hr",
     title: "Ruhepuls",
-    value: coach.sevenDayAverage === null ? "keine Daten" : `${Math.round(coach.sevenDayAverage)} bpm`,
+    value: coach.sevenDayAverage === null ? "—" : `${Math.round(coach.sevenDayAverage)} bpm`,
     detail:
       coach.baseline28DayAverage === null
-        ? "7-Tage-Schnitt"
-        : `7 Tage vs. 28-Tage-Baseline ${Math.round(coach.baseline28DayAverage)} bpm`,
+        ? `7-Tage-Schnitt: ${coach.sevenDaySampleDays}/7 Messtage`
+        : `7 Tage vs. vorherige 28 Tage: ${Math.round(coach.baseline28DayAverage)} bpm`,
     interpretation: coach.statusLabel,
     deltaLabel: compareLabel(currentAvg, previousAvg, "bpm", "avg"),
     direction: "down_good",

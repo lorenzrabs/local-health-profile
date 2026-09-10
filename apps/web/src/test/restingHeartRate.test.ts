@@ -46,7 +46,7 @@ describe("resting heart rate coach", () => {
 
     expect(coach.status).toBe("best_phase");
     expect(Math.round(coach.sevenDayAverage ?? 0)).toBe(57);
-    expect(Math.round(coach.baseline28DayAverage ?? 0)).toBe(61);
+    expect(Math.round(coach.baseline28DayAverage ?? 0)).toBe(62);
     expect(coach.deltaFromBaseline).toBeLessThan(0);
     expect(coach.statusLabel).toBe("Neue Bestphase");
   });
@@ -66,3 +66,8 @@ function restingHeartRateSamples(startDate: string, values: number[]) {
     };
   });
 }
+
+it('does not classify a week from just one reading or compare overlapping windows',()=>{
+ const db=openDatabase(':memory:');syncHealthKitBatch(db,{samples:restingHeartRateSamples('2026-04-23',[60]),workouts:[]});
+ const c=getRestingHeartRateCoach(db,'2026-04-23');expect(c.status).toBe('missing');expect(c.sevenDaySampleDays).toBe(1);expect(c.baselineSampleDays).toBe(0);
+});

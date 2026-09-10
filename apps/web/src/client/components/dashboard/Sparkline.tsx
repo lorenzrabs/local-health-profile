@@ -1,32 +1,40 @@
 import type { TrendCard } from "../../../shared/types";
-
 export function Sparkline({ card }: { card: TrendCard }) {
-  const values = card.points.map((point) => point.value).filter((value): value is number => value !== null);
-  if (values.length < 2) {
-    return <div className="grid h-16 place-items-center rounded-md border border-dashed text-xs text-muted-foreground">Noch zu wenig Daten</div>;
-  }
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const width = 220;
-  const height = 64;
-  const padding = 6;
-  const step = (width - padding * 2) / Math.max(1, card.points.length - 1);
-  const points = card.points
-    .map((point, index) => {
-      if (point.value === null) return null;
-      const x = padding + index * step;
-      const y = height - padding - ((point.value - min) / range) * (height - padding * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
-
+  const values = card.points
+    .map((p) => p.value)
+    .filter((v): v is number => v !== null);
+  if (values.length < 2)
+    return (
+      <div className="muted-text" style={{ fontSize: 9, paddingTop: 9 }}>
+        Noch kein Verlauf
+      </div>
+    );
+  const lo = Math.min(...values),
+    hi = Math.max(...values),
+    span = hi - lo || 1;
+  const segments: string[] = [];
+  card.points.forEach((p, i) => {
+    if (p.value === null) return;
+    const x = 4 + (i / Math.max(1, card.points.length - 1)) * 212,
+      y = hi === lo ? 29 : 52 - ((p.value - lo) / span) * 44;
+    segments.push(
+      `${i === 0 || card.points[i - 1].value === null ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`,
+    );
+  });
   return (
-    <svg className="h-16 w-full" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${card.title} Verlauf`}>
-      <polyline className="fill-none stroke-primary/20" points={`${points} ${width - padding},${height - padding} ${padding},${height - padding}`} />
-      <polyline className="fill-none stroke-primary" points={points} strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" />
+    <svg
+      viewBox="0 0 220 58"
+      role="img"
+      aria-label={`${card.title}: Verlauf; Lücken sind fehlende Messungen`}
+    >
+      <path
+        d={segments.join(" ")}
+        stroke="#789377"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        fill="none"
+      />
     </svg>
   );
 }

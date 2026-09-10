@@ -1,402 +1,361 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { HabitAnalysis, HabitCorrelation, HabitDay, HabitDefinition, HabitEntry } from "../../../shared/types";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { useEffect, useState } from "react";
+import {
+  ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  Minus,
+  SlidersHorizontal,
+} from "lucide-react";
+import type {
+  HabitAnalysis,
+  HabitCorrelation,
+  HabitDay,
+  HabitDefinition,
+} from "../../../shared/types";
+import { shiftDate } from "../../../shared/dates";
 
 export function HabitsSection({
+  analysis,
   initialHabits,
   today,
-  onTodayChanged
+  onTodayChanged,
 }: {
+  analysis: HabitAnalysis;
   initialHabits: HabitDay;
   today: string;
   onTodayChanged: () => Promise<void>;
 }) {
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [habitDay, setHabitDay] = useState(initialHabits);
-  const [analysis, setAnalysis] = useState<HabitAnalysis | null>(null);
-  const [analysisRange, setAnalysisRange] = useState<30 | 90 | 365>(90);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
+  const [selectedDate, setSelectedDate] = useState(today),
+    [day, setDay] = useState(initialHabits),
+    [saving, setSaving] = useState(false),
+    [error, setError] = useState("");
   useEffect(() => {
-    if (selectedDate === initialHabits.date) {
-      setHabitDay(initialHabits);
-    }
+    setSelectedDate(today);
+  }, [today]);
+  useEffect(() => {
+    if (initialHabits.date === selectedDate) setDay(initialHabits);
   }, [initialHabits, selectedDate]);
-
   useEffect(() => {
-    let isCurrent = true;
-    async function loadHabitDay() {
-      try {
-        const next = await fetchHabitDay(selectedDate);
-        if (isCurrent) {
-          setHabitDay(next);
+    let current = true;
+    fetch(`/api/habits?date=${selectedDate}`)
+      .then((r) => {
+        if (!r.ok) throw Error();
+        return r.json();
+      })
+      .then((d) => {
+        if (current) {
+          setDay(d);
           setError("");
         }
-      } catch (loadError) {
-        if (isCurrent) setError(loadError instanceof Error ? loadError.message : "Habits konnten nicht geladen werden.");
-      }
-    }
-    loadHabitDay();
+      })
+      .catch(() => {
+        if (current) setError("Einträge konnten nicht geladen werden.");
+      });
     return () => {
-      isCurrent = false;
+      current = false;
     };
   }, [selectedDate]);
-
-  useEffect(() => {
-    let isCurrent = true;
-    async function loadAnalysis() {
-      try {
-        const next = await fetchHabitAnalysis(today, analysisRange);
-        if (isCurrent) setAnalysis(next);
-      } catch (analysisError) {
-        console.error(analysisError);
-        if (isCurrent) setAnalysis(null);
-      }
-    }
-    loadAnalysis();
-    return () => {
-      isCurrent = false;
-    };
-  }, [analysisRange, today, habitDay]);
-
-  const entriesByHabit = useMemo(
-    () => new Map(habitDay.entries.map((entry) => [entry.habitClientId || String(entry.habitId), entry])),
-    [habitDay.entries]
-  );
-  const completedCount = habitDay.definitions.filter((habit) => entriesByHabit.get(habit.clientId)?.completed ?? false).length;
-  const totalCount = habitDay.definitions.length;
-  const completionRate = totalCount > 0 ? completedCount / totalCount : 0;
-  const percent = Math.round(completionRate * 100);
-
-  async function toggleHabit(habit: HabitDefinition, completed: boolean) {
-    const now = new Date().toISOString();
-    const nextEntry: HabitEntry = {
-      habitId: habit.id,
-      habitClientId: habit.clientId,
-      date: selectedDate,
-      completed,
-      updatedAt: now
-    };
-    const key = `${selectedDate}-${habit.clientId}`;
-    setSavingKey(key);
+  async function record(h: HabitDefinition, completed: boolean) {
+    setSaving(true);
     setError("");
-    setHabitDay((current) => ({
-      ...current,
-      entries: upsertEntry(current.entries, nextEntry)
-    }));
-
     try {
-      await fetch("/api/habits/sync", {
+      const r = await fetch("/api/habits/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           entries: [
             {
-              habitId: habit.id,
-              habitClientId: habit.clientId,
+              habitId: h.id,
+              habitClientId: h.clientId,
               date: selectedDate,
               completed,
-              updatedAt: now
-            }
-          ]
-        })
-      }).then(async (response) => {
-        if (!response.ok) throw new Error(await response.text());
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        }),
       });
-      setHabitDay(await fetchHabitDay(selectedDate));
-      setAnalysis(await fetchHabitAnalysis(today, analysisRange));
-      if (selectedDate === today) await onTodayChanged();
-    } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : "Habit konnte nicht synchronisiert werden.");
-      setHabitDay(await fetchHabitDay(selectedDate).catch(() => habitDay));
+      if (!r.ok) throw Error();
+      const next = await fetch(`/api/habits?date=${selectedDate}`);
+      if (!next.ok) throw Error();
+      setDay(await next.json());
+      await onTodayChanged();
+    } catch {
+      setError(
+        "Eintrag konnte nicht gespeichert werden. Bitte erneut versuchen.",
+      );
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
   }
-
+  const ranked = [...analysis.items].sort(
+    (a, b) => b.trackedDays - a.trackedDays,
+  );
   return (
-    <section className="grid gap-6">
-      <Card>
-        <CardHeader className="gap-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <CardDescription>Habits</CardDescription>
-              <CardTitle className="mt-1 flex flex-wrap items-center gap-3 text-2xl">
-                Tagesanker
-                <Badge variant={percent >= 70 ? "default" : "secondary"}>{percent}% erledigt</Badge>
-              </CardTitle>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={() => setSelectedDate(addDays(selectedDate, -1))} aria-label="Vorheriger Tag">
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <div className="min-w-44 rounded-md border bg-background px-3 py-2 text-center">
-                <div className="text-sm font-semibold">{formatDateTitle(selectedDate)}</div>
-                <div className="text-xs text-muted-foreground">{selectedDate}</div>
+    <section id="habits" className="habit-section">
+      <div className="section-heading">
+        <div>
+          <div className="section-kicker">GEWOHNHEITEN</div>
+          <h2>Was deine Habits zeigen.</h2>
+        </div>
+        <span className="subtle-label">
+          {analysis.items.length} aktive Habits · {analysis.recordedDays}/
+          {analysis.totalDays} Tage erfasst
+        </span>
+      </div>
+      <div className="habit-layout">
+        <div className="habit-table-wrap">
+          <div className="habit-table-heading">
+            <span>Deine Einträge</span>
+            <span>Ja / erfasst</span>
+            <span>Erfassung</span>
+            <span>Letzte 7 Tage</span>
+          </div>
+          {ranked.map((h) => (
+            <details className="habit-table-row" key={h.clientId}>
+              <summary>
+                <span className="habit-name">{h.name}</span>
+                <span className="habit-ratio">
+                  <b>{h.eventDays}</b>
+                  <span> / {h.trackedDays}</span>
+                </span>
+                <span className="coverage-cell">
+                  <span className="coverage-track">
+                    <i style={{ width: `${h.trackingRate * 100}%` }} />
+                  </span>
+                  <small>{Math.round(h.trackingRate * 100)}%</small>
+                </span>
+                <span className="habit-week">
+                  {h.recentTrackedDays >= 3 &&
+                  h.previousTrackedDays >= 3 &&
+                  h.recentRate !== null &&
+                  h.previousRate !== null ? (
+                    <>
+                      {Math.round((h.recentRate - h.previousRate) * 100) > 0
+                        ? "+"
+                        : ""}
+                      {Math.round((h.recentRate - h.previousRate) * 100)} pp
+                    </>
+                  ) : (
+                    <span className="muted-text">—</span>
+                  )}
+                  <ArrowUpRight size={14} />
+                </span>
+              </summary>
+              <div className="habit-row-detail">
+                <p>
+                  {h.eventDays} Ja · {h.nonEventDays} Nein · {h.missingDays}{" "}
+                  Tage ohne Eintrag.{" "}
+                  {h.trackedDays > 0
+                    ? `${Math.round(h.eventRate * 100)}% Ja unter den erfassten Tagen.`
+                    : "Noch keine Auswertung möglich."}
+                </p>
+                <div className="weekday-chart">
+                  {h.weekdays.map((w) => (
+                    <div key={w.weekday}>
+                      <span className="weekday-track">
+                        <i style={{ height: `${w.eventRate * 100}%` }} />
+                      </span>
+                      <b>{w.label}</b>
+                      <small>
+                        {w.totalDays ? `${w.eventDays}/${w.totalDays}` : "—"}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+                <p className="muted-text">
+                  Wochenvergleich: Anteil Ja unter erfassten Tagen; mindestens 3
+                  Einträge je Woche. Prozentpunkte (pp) zeigen die Änderung,
+                  keine Bewertung.
+                </p>
               </div>
-              <Button variant="outline" size="icon" onClick={() => setSelectedDate(addDays(selectedDate, 1))} aria-label="Nächster Tag">
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+            </details>
+          ))}
+          {ranked.length === 0 && (
+            <div className="empty-state">
+              Noch keine aktiven Habits vorhanden.
             </div>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {completedCount}/{totalCount} erledigt. Web und iPhone schreiben über dieselbe Habit-Sync-Schnittstelle.
-          </p>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {habitDay.definitions.map((habit) => {
-            const completed = entriesByHabit.get(habit.clientId)?.completed ?? false;
-            const key = `${selectedDate}-${habit.clientId}`;
-            return (
-              <HabitToggle
-                key={habit.clientId}
-                habit={habit}
-                completed={completed}
-                disabled={savingKey === key}
-                onToggle={(next) => toggleHabit(habit, next)}
-              />
-            );
-          })}
-          {habitDay.definitions.length === 0 && (
-            <p className="text-sm text-muted-foreground">Für diesen Tag sind noch keine aktiven Habits vorhanden.</p>
           )}
-          {error && <p className="md:col-span-2 xl:col-span-4 text-sm text-destructive">{error}</p>}
-        </CardContent>
-      </Card>
-      {analysis && (
-        <HabitAnalysisPanel
-          analysis={analysis}
-          selectedRange={analysisRange}
-          onRangeChange={setAnalysisRange}
-        />
-      )}
+          <div className="table-foot">
+            Fehlende Einträge bleiben unbekannt. Archivierte Habits werden nicht
+            ausgewertet.
+          </div>
+        </div>
+        <aside className="insights-panel">
+          <div className="section-kicker">AM FOLGETAG</div>
+          <h3>Muster entdecken.</h3>
+          <p className="muted-text">
+            Mit Ereignis und ohne Ereignis – nur ausdrücklich erfasste Tage.
+          </p>
+          <CorrelationList correlations={analysis.correlations} />
+          <details className="method-note">
+            <summary>So rechnen wir</summary>
+            {analysis.notes.map((n) => (
+              <p key={n}>{n}</p>
+            ))}
+          </details>
+        </aside>
+      </div>
+      <details className="entry-editor">
+        <summary>
+          <SlidersHorizontal size={16} /> Einträge bearbeiten{" "}
+          <span>Ja, Nein oder noch offen</span>
+        </summary>
+        <div className="entry-editor-body">
+          <div className="date-stepper">
+            <button
+              aria-label="Vorheriger Tag"
+              onClick={() => setSelectedDate(shiftDate(selectedDate, -1))}
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <input
+              aria-label="Datum für Habit-Einträge"
+              type="date"
+              value={selectedDate}
+              max={today}
+              onChange={(e) => {
+                if (e.target.value) setSelectedDate(e.target.value);
+              }}
+            />
+            <button
+              aria-label="Nächster Tag"
+              disabled={selectedDate >= today}
+              onClick={() => setSelectedDate(shiftDate(selectedDate, 1))}
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+          <div className="entry-grid">
+            {day.definitions
+              .filter((h) => h.isActive)
+              .map((h) => {
+                const e = day.entries.find((e) => e.habitId === h.id);
+                return (
+                  <div className="entry-item" key={h.clientId}>
+                    <span>
+                      {h.name}
+                      <small>
+                        {e === undefined
+                          ? "Nicht erfasst"
+                          : e.completed
+                            ? "Ereignis erfasst"
+                            : "Ohne Ereignis erfasst"}
+                      </small>
+                    </span>
+                    <div>
+                      {[true, false].map((value) => (
+                        <button
+                          key={String(value)}
+                          disabled={saving || day.date !== selectedDate}
+                          className={e?.completed === value ? "selected" : ""}
+                          aria-pressed={e?.completed === value}
+                          aria-label={`${h.name}: ${value ? "Ja" : "Nein"}`}
+                          onClick={() => record(h, value)}
+                        >
+                          {value ? <Check size={14} /> : <Minus size={14} />}{" "}
+                          {value ? "Ja" : "Nein"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+          {error && (
+            <p className="error-message" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      </details>
     </section>
   );
 }
-
-function HabitAnalysisPanel({
-  analysis,
-  selectedRange,
-  onRangeChange
+function CorrelationList({
+  correlations,
 }: {
-  analysis: HabitAnalysis;
-  selectedRange: 30 | 90 | 365;
-  onRangeChange: (range: 30 | 90 | 365) => void;
+  correlations: HabitCorrelation[];
 }) {
-  const topHabits = [...analysis.items]
-    .filter((item) => item.eventDays > 0)
-    .sort((left, right) => right.eventDays - left.eventDays)
-    .slice(0, 6);
-  const strongest = analysis.correlations
-    .filter((correlation) => correlation.quality === "ok" && correlation.delta !== null)
-    .slice(0, 6);
-
+  const [metric, setMetric] = useState("resting_hr"),
+    [showAll, setShowAll] = useState(false);
+  const selected = correlations.filter((c) => c.metric === metric);
   return (
-    <Card>
-      <CardHeader className="gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <CardDescription>Habit-Analyse</CardDescription>
-            <CardTitle className="mt-1 text-2xl">Muster & mögliche Zusammenhänge</CardTitle>
-          </div>
-          <div className="flex rounded-md border bg-background p-1">
-            {[30, 90, 365].map((range) => (
-              <Button
-                key={range}
-                variant={selectedRange === range ? "default" : "ghost"}
-                size="sm"
-                onClick={() => onRangeChange(range as 30 | 90 | 365)}
-              >
-                {range} Tage
-              </Button>
-            ))}
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Zeitraum {analysis.startDate} bis {analysis.endDate}. Toggle an bedeutet: Ereignis passiert. Korrelationen sind Hinweise, keine Ursache.
-        </p>
-      </CardHeader>
-      <CardContent className="grid gap-6">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {topHabits.map((habit) => (
-            <div key={habit.clientId} className="rounded-lg border bg-background p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-semibold">{habit.name}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {habit.eventDays} Ereignistage · {formatPercent(habit.eventRate)}
-                  </div>
-                </div>
-                {!habit.isActive && <Badge variant="secondary">archiviert</Badge>}
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-                <MiniStat label="Aktuell" value={`${habit.currentStreak} d`} />
-                <MiniStat label="Längste" value={`${habit.longestStreak} d`} />
-                <MiniStat label="Tracking" value={formatPercent(habit.trackingRate)} />
-              </div>
-              <div className="mt-3 flex gap-1">
-                {habit.weekdays.map((weekday) => (
-                  <div key={weekday.weekday} className="grid flex-1 gap-1 text-center">
-                    <div className="h-12 rounded-sm bg-muted">
-                      <div
-                        className="mt-auto h-full rounded-sm bg-primary/70"
-                        style={{ transform: `scaleY(${weekday.eventRate})`, transformOrigin: "bottom" }}
-                      />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">{weekday.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold">Mögliche Zusammenhänge</h3>
-            <Badge variant="outline">{strongest.length} Hinweise</Badge>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {strongest.map((correlation) => (
-              <CorrelationCard key={`${correlation.habitClientId}-${correlation.metric}-${correlation.timing}`} correlation={correlation} />
-            ))}
-            {strongest.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                Für dieses Zeitfenster gibt es noch nicht genug Ereignis- und Vergleichstage für robuste Hinweise.
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
-          {analysis.notes.join(" ")}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md bg-muted/60 px-2 py-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-semibold">{value}</div>
-    </div>
-  );
-}
-
-function CorrelationCard({ correlation }: { correlation: HabitCorrelation }) {
-  return (
-    <div className="rounded-lg border bg-background p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm text-muted-foreground">
-            {correlation.timing === "nextDay" ? "Folgetag" : "Gleicher Tag"} · {correlation.metricLabel}
-          </div>
-          <div className="font-semibold">{correlation.habitName}</div>
-        </div>
-        <Badge variant={Math.abs(correlation.delta ?? 0) > 0 ? "secondary" : "outline"}>
-          {formatDelta(correlation.delta, correlation.unit)}
-        </Badge>
-      </div>
-      <p className="mt-3 text-sm text-muted-foreground">{correlation.summary}</p>
-      <div className="mt-3 text-xs text-muted-foreground">
-        Ereignistage: {correlation.eventDays} · Vergleichstage: {correlation.comparisonDays}
-      </div>
-    </div>
-  );
-}
-
-function HabitToggle({
-  habit,
-  completed,
-  disabled,
-  onToggle
-}: {
-  habit: HabitDefinition;
-  completed: boolean;
-  disabled: boolean;
-  onToggle: (completed: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onToggle(!completed)}
-      className="flex items-center justify-between gap-4 rounded-md border bg-background p-3 text-left transition hover:bg-accent disabled:opacity-60"
-    >
-      <span className="text-sm font-medium">{habit.name}</span>
-      <span
-        className={[
-          "relative h-6 w-11 shrink-0 rounded-full transition",
-          completed ? "bg-primary" : "bg-muted-foreground/40"
-        ].join(" ")}
-        aria-hidden="true"
+    <>
+      <div
+        className="metric-tabs"
+        role="group"
+        aria-label="Messgröße der Habit-Analyse"
       >
-        <span
-          className={[
-            "absolute top-1 h-4 w-4 rounded-full bg-background shadow-sm transition",
-            completed ? "left-6" : "left-1"
-          ].join(" ")}
-        />
-      </span>
-    </button>
+        {[
+          ["resting_hr", "Ruhepuls"],
+          ["hrv", "HRV"],
+          ["sleep", "Schlaf"],
+        ].map(([id, label]) => (
+          <button
+            aria-pressed={metric === id}
+            key={id}
+            onClick={() => {
+              setMetric(id);
+              setShowAll(false);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {selected.length === 0 ? (
+        <div className="empty-state">
+          <span className="empty-symbol">↗</span>
+          <b>Noch kein belastbarer Vergleich</b>
+          <p>
+            Mindestens 7 gemessene Folgetage nach „Ja“ und 7 nach „Nein“ nötig.
+            Weitere Einträge machen die Auswertung aussagekräftiger.
+          </p>
+        </div>
+      ) : (
+        selected.slice(0, showAll ? selected.length : 3).map((c) => (
+          <div className="correlation-card" key={c.habitClientId}>
+            <div>
+              <b>{c.habitName}</b>
+              <strong>
+                {c.delta! > 0 ? "+" : ""}
+                {c.delta!.toFixed(1)} <small>{c.unit}</small>
+              </strong>
+            </div>
+            <div className="comparison-numbers">
+              <span>
+                Mit Ereignis <b>{c.eventMedian!.toFixed(1)}</b>
+                <small>{c.eventDays} Messtage</small>
+              </span>
+              <span>
+                Ohne Ereignis <b>{c.comparisonMedian!.toFixed(1)}</b>
+                <small>{c.comparisonDays} Messtage</small>
+              </span>
+            </div>
+            <p>
+              Median am Folgetag ·{" "}
+              {c.confidence === "more_data"
+                ? "größere Datenbasis"
+                : "vorläufiger Hinweis"}
+            </p>
+          </div>
+        ))
+      )}
+      {selected.length > 3 && (
+        <button
+          className="quiet-button"
+          style={{ marginTop: 12 }}
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "Weniger anzeigen" : `Alle ${selected.length} Vergleiche`}
+        </button>
+      )}
+      {selected.length > 0 && (
+        <p className="association-note">
+          Beobachteter Unterschied, kein Wirkungsnachweis.
+        </p>
+      )}
+    </>
   );
-}
-
-async function fetchHabitDay(date: string) {
-  const response = await fetch(`/api/habits?date=${date}`);
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<HabitDay>;
-}
-
-async function fetchHabitAnalysis(date: string, rangeDays: 30 | 90 | 365) {
-  const response = await fetch(`/api/habits/analysis?date=${date}&rangeDays=${rangeDays}`);
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<HabitAnalysis>;
-}
-
-function upsertEntry(entries: HabitEntry[], nextEntry: HabitEntry) {
-  const withoutCurrent = entries.filter(
-    (entry) => !(entry.date === nextEntry.date && entry.habitClientId === nextEntry.habitClientId)
-  );
-  return [...withoutCurrent, nextEntry];
-}
-
-function addDays(dateKey: string, days: number) {
-  const date = new Date(`${dateKey}T12:00:00`);
-  date.setDate(date.getDate() + days);
-  return toDateKey(date);
-}
-
-function toDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatDateTitle(dateKey: string) {
-  return new Intl.DateTimeFormat("de-DE", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short"
-  }).format(new Date(`${dateKey}T12:00:00`));
-}
-
-function formatPercent(value: number) {
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatDelta(value: number | null, unit: string) {
-  if (value === null) return "n/a";
-  const formatted = Math.abs(value) >= 100 ? Math.round(value).toLocaleString("de-DE") : value.toFixed(1);
-  return `${value >= 0 ? "+" : "-"}${formatted.replace("-", "")}${unit ? ` ${unit}` : ""}`;
 }

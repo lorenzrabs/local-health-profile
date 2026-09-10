@@ -1,53 +1,68 @@
-import { QrCode, Watch } from "lucide-react";
+import { useState } from "react";
+import { Smartphone, X, Loader2 } from "lucide-react";
 import type { PairingResponse } from "../../../shared/types";
-import { Button } from "../ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-
 export function PairingPanel({
   pairing,
-  onCreatePairing
+  onCreatePairing,
 }: {
   pairing: PairingResponse | null;
-  onCreatePairing: () => void;
+  onCreatePairing: () => Promise<void>;
 }) {
+  const [open, setOpen] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  async function pair() {
+    setBusy(true);
+    setError("");
+    try {
+      await onCreatePairing();
+    } catch {
+      setError("Kopplung fehlgeschlagen. Bitte erneut versuchen.");
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
-    <Card>
-      <CardHeader>
-        <CardDescription>Apple Health</CardDescription>
-        <CardTitle className="flex items-center gap-2">
-          <Watch className="h-5 w-5" />
-          iOS Sync koppeln
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm leading-6 text-muted-foreground">
-          Erzeuge einen lokalen Token und scanne den QR-Code mit der iPhone-Kamera. Health Profile öffnet sich direkt
-          und übernimmt Server plus Token automatisch.
-        </p>
-        <Button onClick={onCreatePairing} className="w-full">
-          <QrCode className="h-4 w-4" />
-          Pairing erzeugen
-        </Button>
-        {pairing && (
-          <div className="grid gap-3">
-            <img src={pairing.qrDataUrl} alt="Pairing QR-Code" className="h-36 w-36 rounded-md border bg-background" />
-            <div className="space-y-2 text-xs">
-              <div>
-                <span className="font-medium">App-Link</span>
-                <code className="mt-1 block rounded-md bg-muted p-2 text-muted-foreground">{pairing.pairingUrl}</code>
-              </div>
-              <div>
-                <span className="font-medium">Server</span>
-                <code className="mt-1 block rounded-md bg-muted p-2 text-muted-foreground">{pairing.serverUrl}</code>
-              </div>
-              <div>
-                <span className="font-medium">Token</span>
-                <code className="mt-1 block rounded-md bg-muted p-2 text-muted-foreground">{pairing.token}</code>
-              </div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <div className="sync-control">
+      <button
+        className="quiet-button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <Smartphone size={16} /> iPhone koppeln
+      </button>
+      {open && (
+        <div className="sync-popover" role="region" aria-label="iPhone koppeln">
+          <button
+            className="popover-close"
+            aria-label="Kopplung schließen"
+            onClick={() => setOpen(false)}
+          >
+            <X size={18} />
+          </button>
+          <h3>Mit Apple Health verbinden</h3>
+          <p>QR-Code mit der iPhone-Kamera scannen.</p>
+          {pairing ? (
+            <>
+              <img
+                src={pairing.qrDataUrl}
+                alt="QR-Code zum Koppeln der Health-App"
+                width={180}
+                height={180}
+              />
+              <a className="primary-button" href={pairing.pairingUrl}>
+                Auf diesem iPhone öffnen
+              </a>
+            </>
+          ) : (
+            <button className="primary-button" disabled={busy} onClick={pair}>
+              {busy ? <Loader2 className="animate-spin" size={16} /> : null}{" "}
+              QR-Code anzeigen
+            </button>
+          )}
+          {error && <p role="alert">{error}</p>}
+        </div>
+      )}
+    </div>
   );
 }

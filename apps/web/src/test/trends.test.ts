@@ -61,7 +61,8 @@ describe("trend dashboard", () => {
 
     expect(trends.cards).toHaveLength(6);
     expect(running?.value).toBe("6.0 km");
-    expect(restingHr?.interpretation).toBe("Stabil");
+    // One measurement cannot establish a stable personal baseline.
+    expect(restingHr?.interpretation).toBe("Zu wenig Daten");
     expect(sleep?.value).toBe("8.0 h");
   });
 });

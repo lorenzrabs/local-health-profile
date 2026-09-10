@@ -91,7 +91,7 @@ describe("daily recommendation", () => {
     const db = openDatabase(":memory:");
     syncHealthKitBatch(db, {
       deviceName: "Apple Watch",
-      samples: restingHeartRateSamples("2026-03-27", [...Array(21).fill(60), ...Array(7).fill(68)]),
+      samples: restingHeartRateSamples("2026-03-27", [...Array(21).fill(60), ...Array(7).fill(66)]),
       workouts: []
     });
     upsertDailyCheckIn(db, {

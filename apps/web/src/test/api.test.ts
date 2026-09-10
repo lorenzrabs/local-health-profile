@@ -201,7 +201,7 @@ describe("API", () => {
     expect(analysis.rangeDays).toBe(30);
     expect(analysis.items.some((item) => item.name === "Kreatin")).toBe(true);
     expect(Array.isArray(analysis.correlations)).toBe(true);
-    expect(analysis.notes.some((note) => note.includes("Korrelationen"))).toBe(true);
+    expect(analysis.notes.some((note) => note.includes("Wirkungsnachweise"))).toBe(true);
   });
 
   it("creates, serves, consumes and stores errors for shopping-list exports", async () => {
