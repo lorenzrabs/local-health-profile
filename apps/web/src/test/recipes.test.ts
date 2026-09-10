@@ -15,7 +15,10 @@ describe("recipes", () => {
       "Skyr-Berry-Protein-Jar",
       "Cappuccino",
       "Green Smoothie",
-      "Super-Veggie-Bowl mit Beluga-Linsen + Eiern"
+      "Kichererbsen-Spinat-Tomaten-Pfanne mit Feta",
+      "Ofenlachs mit Brokkoli, Paprika & Reis",
+      "Quinoa-Salat mit Feta",
+      "Super-Veggie-Bowl mit Beluga-Linsen"
     ]);
     expect(recipes.some((recipe) => recipe.name === "Waldfruchtjoghurt")).toBe(false);
   });
@@ -69,15 +72,69 @@ describe("recipes", () => {
   it("seeds the Super-Veggie-Bowl as a scalable lunch recipe", () => {
     const db = openDatabase(":memory:");
 
-    const bowl = getRecipes(db, 3).find((recipe) => recipe.name === "Super-Veggie-Bowl mit Beluga-Linsen + Eiern");
+    const bowl = getRecipes(db, 3).find((recipe) => recipe.name === "Super-Veggie-Bowl mit Beluga-Linsen");
 
     expect(bowl?.category).toBe("lunch");
-    expect(bowl?.scaledItems.find((item) => item.name === "Beluga-Linsen, trocken")?.totalAmount).toBe(135);
-    expect(bowl?.scaledItems.find((item) => item.name === "Brokkoli")?.totalAmount).toBe(750);
-    expect(bowl?.scaledItems.find((item) => item.name === "Eier")?.totalAmount).toBe(6);
-    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "calories")?.totalAmount).toBe(2046);
-    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "protein")?.totalAmount).toBe(121.5);
-    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "choline")?.totalAmount).toBe(885);
+    expect(bowl?.scaledItems.find((item) => item.name === "Beluga-Linsen, trocken")?.totalAmount).toBe(105);
+    expect(bowl?.scaledItems.find((item) => item.name === "Brokkoli")?.totalAmount).toBe(1.5);
+    expect(bowl?.scaledItems.find((item) => item.name === "Brokkoli")?.unit).toBe("kleiner Kopf");
+    expect(bowl?.scaledItems.find((item) => item.name === "Blumenkohl")?.totalAmount).toBe(0.75);
+    expect(bowl?.scaledItems.find((item) => item.name === "Blumenkohl")?.unit).toBe("kleiner Kopf");
+    expect(bowl?.scaledItems.find((item) => item.name === "Hummus")).toBeUndefined();
+    expect(bowl?.scaledItems.find((item) => item.name === "Eier")).toBeUndefined();
+    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "calories")?.totalAmount).toBe(1335);
+    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "protein")?.totalAmount).toBe(60);
+    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "carbs")?.totalAmount).toBe(129);
+    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "fat")?.totalAmount).toBe(69);
+    expect(bowl?.scaledNutrients.find((nutrient) => nutrient.key === "fiber")?.totalAmount).toBe(48);
+  });
+
+  it("seeds the Quinoa-Salat mit Feta with kitchen-measure vegetables", () => {
+    const db = openDatabase(":memory:");
+
+    const salad = getRecipes(db, 2).find((recipe) => recipe.name === "Quinoa-Salat mit Feta");
+
+    expect(salad?.category).toBe("lunch");
+    expect(salad?.scaledItems.find((item) => item.name === "Quinoa, trocken")?.totalAmount).toBe(120);
+    expect(salad?.scaledItems.find((item) => item.name === "Feta")?.totalAmount).toBe(100);
+    expect(salad?.scaledItems.find((item) => item.name === "Gurke")?.totalAmount).toBe(0.5);
+    expect(salad?.scaledItems.find((item) => item.name === "Paprika")?.totalAmount).toBe(1);
+    expect(salad?.scaledItems.find((item) => item.name === "Rote Zwiebel")?.totalAmount).toBe(0.5);
+    expect(salad?.scaledNutrients.find((nutrient) => nutrient.key === "calories")?.totalAmount).toBe(1074);
+    expect(salad?.scaledNutrients.find((nutrient) => nutrient.key === "protein")?.totalAmount).toBe(36.4);
+    expect(salad?.scaledNutrients.find((nutrient) => nutrient.key === "salt")?.totalAmount).toBe(2.4);
+  });
+
+  it("seeds the Kichererbsen-Spinat-Tomaten-Pfanne mit Feta as a scalable lunch recipe", () => {
+    const db = openDatabase(":memory:");
+
+    const pan = getRecipes(db, 2).find((recipe) => recipe.name === "Kichererbsen-Spinat-Tomaten-Pfanne mit Feta");
+
+    expect(pan?.category).toBe("lunch");
+    expect(pan?.scaledItems.find((item) => item.name === "Kichererbsen, abgetropft")?.totalAmount).toBe(240);
+    expect(pan?.scaledItems.find((item) => item.name === "Zwiebel")?.totalAmount).toBe(1);
+    expect(pan?.scaledItems.find((item) => item.name === "Geschälte Tomaten")?.totalAmount).toBe(0.5);
+    expect(pan?.scaledItems.find((item) => item.name === "Feta")?.totalAmount).toBe(100);
+    expect(pan?.scaledItems.find((item) => item.name === "Salz")).toBeUndefined();
+    expect(pan?.scaledNutrients.find((nutrient) => nutrient.key === "calories")?.totalAmount).toBe(930);
+    expect(pan?.scaledNutrients.find((nutrient) => nutrient.key === "protein")?.totalAmount).toBe(42);
+    expect(pan?.scaledNutrients.find((nutrient) => nutrient.key === "salt")?.totalAmount).toBe(3);
+  });
+
+  it("seeds the Ofenlachs mit Brokkoli, Paprika & Reis as a scalable lunch recipe", () => {
+    const db = openDatabase(":memory:");
+
+    const salmon = getRecipes(db, 2).find((recipe) => recipe.name === "Ofenlachs mit Brokkoli, Paprika & Reis");
+
+    expect(salmon?.category).toBe("lunch");
+    expect(salmon?.scaledItems.find((item) => item.name === "Lachsfilet")?.totalAmount).toBe(250);
+    expect(salmon?.scaledItems.find((item) => item.name === "Reis, trocken")?.totalAmount).toBe(120);
+    expect(salmon?.scaledItems.find((item) => item.name === "Brokkoli")?.totalAmount).toBe(1);
+    expect(salmon?.scaledItems.find((item) => item.name === "Paprika")?.totalAmount).toBe(1);
+    expect(salmon?.scaledItems.find((item) => item.name === "Salz")).toBeUndefined();
+    expect(salmon?.scaledNutrients.find((nutrient) => nutrient.key === "calories")?.totalAmount).toBe(1120);
+    expect(salmon?.scaledNutrients.find((nutrient) => nutrient.key === "protein")?.totalAmount).toBe(66);
+    expect(salmon?.scaledNutrients.find((nutrient) => nutrient.key === "fiber")?.totalAmount).toBe(14);
   });
 
   it("normalizes custom serving input safely", () => {

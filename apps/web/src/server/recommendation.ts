@@ -5,6 +5,13 @@ import { getHeartRateZones } from "./heartRateZones";
 import { getRestingHeartRateCoach } from "./restingHeartRate";
 
 type NumberRow = { value: number | null };
+type ProfileEnergyRow = {
+  age: number;
+  sex: string | null;
+  height_cm: number | null;
+  weight_kg: number | null;
+  nutrition_goal: string | null;
+};
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -29,6 +36,7 @@ export function getTodayDashboard(db: AppDatabase, date = toDateKey(new Date()))
   const runLoad7 = runDistance(db, sevenDaysAgo, dayEnd);
   const runLoadPrev7 = runDistance(db, fourteenDaysAgo, sevenDaysAgo);
   const runCount7 = runCount(db, sevenDaysAgo, dayEnd);
+  const calorieTarget = getCalorieTarget(db, date);
 
   const riskFlags: string[] = [];
   const reasons: string[] = [];
@@ -150,7 +158,8 @@ export function getTodayDashboard(db: AppDatabase, date = toDateKey(new Date()))
       hrvBaseline,
       runLoad7,
       runLoadPrev7,
-      runCount7
+      runCount7,
+      calorieTarget
     }),
     restingHeartRateCoach,
     heartRateZones,
@@ -289,6 +298,7 @@ function buildMetrics(input: {
   runLoad7: number;
   runLoadPrev7: number;
   runCount7: number;
+  calorieTarget: CalorieTarget | null;
 }): DashboardMetric[] {
   return [
     {
@@ -328,8 +338,80 @@ function buildMetrics(input: {
       value: `${Math.round(input.stepsToday)} Schritte`,
       detail: `${Math.round(input.activeEnergyToday)} kcal aktiv`,
       status: input.stepsToday >= 8000 ? "good" : "neutral"
+    },
+    {
+      label: "Kalorienziel",
+      value: input.calorieTarget === null ? "offen" : `${formatKcal(input.calorieTarget.targetCalories)} kcal`,
+      detail:
+        input.calorieTarget === null
+          ? "Profil- oder Energiedaten fehlen"
+          : `Halten ~${formatKcal(input.calorieTarget.maintenanceCalories)} kcal, Aufbau +${input.calorieTarget.surplusCalories} kcal`,
+      status: input.calorieTarget === null ? "neutral" : "good"
     }
   ];
+}
+
+type CalorieTarget = {
+  maintenanceCalories: number;
+  targetCalories: number;
+  surplusCalories: number;
+};
+
+function getCalorieTarget(db: AppDatabase, date: string): CalorieTarget | null {
+  const profile = db
+    .prepare(`SELECT age, sex, height_cm, weight_kg, nutrition_goal FROM profile WHERE id = 1`)
+    .get() as ProfileEnergyRow | undefined;
+  if (!profile) return null;
+
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  const historyStart = new Date(dayStart.getTime() - 90 * DAY_MS);
+  const healthMaintenance = avgDailyEnergy(db, historyStart, dayStart);
+  const formulaMaintenance = estimateFormulaMaintenance(profile);
+  const maintenanceCalories = roundToNearest(healthMaintenance ?? formulaMaintenance, 50);
+  if (!Number.isFinite(maintenanceCalories) || maintenanceCalories <= 0) return null;
+
+  const surplusCalories = profile.nutrition_goal === "maintain_slow_gain" ? 150 : 0;
+  return {
+    maintenanceCalories,
+    targetCalories: roundToNearest(maintenanceCalories + surplusCalories, 50),
+    surplusCalories
+  };
+}
+
+function avgDailyEnergy(db: AppDatabase, start: Date, end: Date) {
+  const rows = db
+    .prepare(
+      `SELECT date(start_at) AS day,
+              SUM(CASE WHEN type = 'basalEnergyBurned' THEN value ELSE 0 END) AS basal,
+              SUM(CASE WHEN type = 'activeEnergyBurned' THEN value ELSE 0 END) AS active
+       FROM health_samples
+       WHERE type IN ('basalEnergyBurned', 'activeEnergyBurned')
+         AND start_at >= ?
+         AND start_at < ?
+       GROUP BY date(start_at)`
+    )
+    .all(start.toISOString(), end.toISOString()) as { day: string; basal: number; active: number }[];
+
+  const completeDays = rows.filter((row) => row.basal > 1000 && row.active > 50);
+  if (completeDays.length < 7) return null;
+
+  return completeDays.reduce((sum, row) => sum + row.basal + row.active, 0) / completeDays.length;
+}
+
+function estimateFormulaMaintenance(profile: ProfileEnergyRow) {
+  if (!profile.weight_kg || !profile.height_cm || !profile.age) return null;
+  const sexOffset = profile.sex === "male" ? 5 : -161;
+  const bmr = 10 * profile.weight_kg + 6.25 * profile.height_cm - 5 * profile.age + sexOffset;
+  return bmr * 1.25;
+}
+
+function roundToNearest(value: number | null, step: number) {
+  if (value === null) return Number.NaN;
+  return Math.round(value / step) * step;
+}
+
+function formatKcal(value: number) {
+  return value.toLocaleString("de-DE");
 }
 
 function getLastNightWindow(dayStart: Date) {

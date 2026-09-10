@@ -162,6 +162,23 @@ describe("daily recommendation", () => {
     expect(sleepMetric?.value).toBe("8.5 h");
   });
 
+  it("adds a calorie target metric from Health energy history and the body profile", () => {
+    const db = openDatabase(":memory:");
+    syncHealthKitBatch(db, {
+      deviceName: "Apple Watch",
+      samples: energySamples("2026-03-24", 30, 1400, 300),
+      workouts: []
+    });
+
+    const calorieMetric = getTodayDashboard(db, "2026-04-23").metrics.find((metric) => metric.label === "Kalorienziel");
+
+    expect(calorieMetric).toMatchObject({
+      value: "1.850 kcal",
+      detail: "Halten ~1.700 kcal, Aufbau +150 kcal",
+      status: "good"
+    });
+  });
+
   it("creates an AI analysis snapshot without storing raw history", () => {
     const db = openDatabase(":memory:");
     upsertDailyCheckIn(db, {
@@ -194,4 +211,29 @@ function restingHeartRateSamples(startDate: string, values: number[]) {
       endAt: timestamp
     };
   });
+}
+
+function energySamples(startDate: string, days: number, basal: number, active: number) {
+  const start = new Date(`${startDate}T12:00:00.000Z`);
+  return Array.from({ length: days }, (_, index) => {
+    const timestamp = new Date(start.getTime() + index * 24 * 60 * 60 * 1000).toISOString();
+    return [
+      {
+        sourceId: `basal-${index}`,
+        type: "basalEnergyBurned" as const,
+        unit: "kcal",
+        value: basal,
+        startAt: timestamp,
+        endAt: timestamp
+      },
+      {
+        sourceId: `active-${index}`,
+        type: "activeEnergyBurned" as const,
+        unit: "kcal",
+        value: active,
+        startAt: timestamp,
+        endAt: timestamp
+      }
+    ];
+  }).flat();
 }

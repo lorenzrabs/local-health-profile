@@ -173,3 +173,34 @@ struct ShoppingListConsumeResponse: Codable {
     var targetReminderListName: String?
     var createdReminderCount: Int?
 }
+
+struct Recipe: Codable, Identifiable, Equatable {
+    var id: Int
+    var name: String
+    var category: String
+    var instructions: String
+    var prepNotes: String
+    var servingBase: Double
+    var items: [RecipeItem]
+    var nutrientsPerServing: [RecipeNutrient]
+}
+
+struct RecipeItem: Codable, Equatable {
+    var name: String
+    var amount: Double
+    var unit: String
+    var excludeFromNutrition: Bool
+}
+
+struct RecipeNutrient: Codable, Equatable {
+    var key: String
+    var label: String
+    var amount: Double
+    var unit: String
+    var category: String
+}
+
+struct RecipeSelection: Equatable {
+    var recipe: Recipe
+    var portions: Int
+}

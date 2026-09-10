@@ -203,6 +203,10 @@ function migrate(db: AppDatabase) {
   ensureColumn(db, "recipes", "is_active", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "recipe_items", "exclude_from_nutrition", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "habit_definitions", "client_id", "TEXT");
+  ensureColumn(db, "profile", "sex", "TEXT");
+  ensureColumn(db, "profile", "height_cm", "REAL");
+  ensureColumn(db, "profile", "weight_kg", "REAL");
+  ensureColumn(db, "profile", "nutrition_goal", "TEXT");
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_habit_definitions_client_id ON habit_definitions(client_id) WHERE client_id IS NOT NULL`);
 }
 
@@ -213,6 +217,14 @@ function seed(db: AppDatabase) {
   ).run(
     "Langfristig gesund und fit bleiben: Ausdauer, Lauftechnik, Ernährung, Regeneration und nachhaltige Gewohnheiten."
   );
+  db.prepare(
+    `UPDATE profile
+     SET sex = COALESCE(sex, ?),
+         height_cm = COALESCE(height_cm, ?),
+         weight_kg = COALESCE(weight_kg, ?),
+         nutrition_goal = COALESCE(nutrition_goal, ?)
+     WHERE id = 1`
+  ).run("male", 158, 53, "maintain_slow_gain");
 
   const insertGoal = db.prepare(
     `INSERT INTO goals (title, category, priority, notes)
@@ -231,6 +243,7 @@ function seed(db: AppDatabase) {
   });
 
   archiveRecipeByName(db, "Waldfruchtjoghurt");
+  archiveRecipeByName(db, "Super-Veggie-Bowl mit Beluga-Linsen + Eiern");
 
   upsertRecipe(db, {
     name: "Skyr-Berry-Protein-Jar",
@@ -393,44 +406,108 @@ function seed(db: AppDatabase) {
   });
 
   upsertRecipe(db, {
-    name: "Super-Veggie-Bowl mit Beluga-Linsen + Eiern",
+    name: "Quinoa-Salat mit Feta",
     category: "lunch",
-    instructions: "Nährstoffdichte Bowl mit Linsen, Kreuzblütlern, Pilzen, fermentierter Beilage und Eiern.",
-    prepNotes: "Beluga-Linsen vorkochen. Brokkoli, Blumenkohl und Champignons schonend garen; Sauerkraut oder Kimchi erst beim Servieren ergänzen.",
+    instructions: "Quinoa gründlich waschen, mit ca. 120 ml Wasser und etwas Salz 12-15 Minuten kochen, 5 Minuten quellen lassen und abkühlen lassen. Gurke, Paprika und rote Zwiebel klein schneiden, Feta würfeln oder zerbröseln. Olivenöl, Zitronensaft, Salz und Pfeffer verrühren und alles vermengen.",
+    prepNotes: "Gemüse als Küchenmaß: 1/4 Gurke ca. 75 g, 1/2 Paprika ca. 75 g, 1/4 rote Zwiebel ca. 25 g. Feta-Annahme: Milbona Bio griechischer Feta, 50 g.",
     servingBase: 1,
     items: [
-      ["Beluga-Linsen, trocken", 45, "g"],
-      ["Brokkoli", 250, "g"],
-      ["Blumenkohl", 150, "g"],
-      ["Champignons", 100, "g"],
-      ["Knoblauch", 1, "Zehe"],
-      ["Ingwer", 4, "g"],
-      ["Zitronensaft", 0.5, "Zitrone"],
-      ["Kreuzkümmel", 1, "TL"],
-      ["Apfelessig", 1, "EL"],
-      ["Hanfsamen", 10, "g"],
+      ["Quinoa, trocken", 60, "g"],
+      ["Feta", 50, "g"],
+      ["Gurke", 0.25, "Stück"],
+      ["Paprika", 0.5, "Stück"],
+      ["Rote Zwiebel", 0.25, "Stück"],
       ["Olivenöl", 15, "g"],
-      ["Sauerkraut oder Kimchi", 30, "g"],
-      ["Eier", 2, "Stück"]
+      ["Zitronensaft", 0.5, "TL"]
     ],
     nutrients: [
-      ["calories", "Kalorien", 682, "kcal", "macro"],
-      ["protein", "Protein", 40.5, "g", "macro"],
-      ["carbs", "Kohlenhydrate", 63, "g", "macro"],
-      ["fat", "Fett", 33.5, "g", "macro"],
-      ["fiber", "Ballaststoffe", 17, "g", "macro"],
-      ["calcium", "Calcium", 265, "mg", "micro"],
-      ["magnesium", "Magnesium", 200, "mg", "micro"],
-      ["potassium", "Kalium", 2200, "mg", "micro"],
-      ["iron", "Eisen", 10, "mg", "micro"],
-      ["zinc", "Zink", 5.9, "mg", "micro"],
-      ["vitamin_c", "Vitamin C", 255, "mg", "micro"],
-      ["vitamin_k", "Vitamin K", 300, "µg", "micro"],
-      ["folate", "Folat", 540, "µg", "micro"],
-      ["vitamin_b12", "Vitamin B12", 1.2, "µg", "micro"],
-      ["vitamin_d", "Vitamin D", 2, "µg", "micro"],
-      ["omega3_ala", "Omega-3 ALA", 1.1, "g", "micro"],
-      ["choline", "Cholin", 295, "mg", "micro"]
+      ["calories", "Kalorien", 537, "kcal", "macro"],
+      ["protein", "Protein", 18.2, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 47.3, "g", "macro"],
+      ["fat", "Fett", 30.5, "g", "macro"],
+      ["fiber", "Ballaststoffe", 6.5, "g", "macro"],
+      ["salt", "Salz", 1.2, "g", "macro"]
+    ]
+  });
+
+  upsertRecipe(db, {
+    name: "Kichererbsen-Spinat-Tomaten-Pfanne mit Feta",
+    category: "lunch",
+    instructions: "Zwiebel und Knoblauch fein schneiden. Olivenöl in einer Pfanne erhitzen und Zwiebel 2-3 Minuten anschwitzen. Knoblauch kurz dazugeben. Tomatenmark einrühren und etwa 1 Minute anrösten. Geschälte Tomaten, Kichererbsen und Gewürze dazugeben und 8-10 Minuten köcheln lassen. Spinat unterheben, bis er zusammenfällt. Mit Salz und Pfeffer abschmecken. Feta zerbröseln und beim Servieren darübergeben.",
+    prepNotes: "Annahmen: 120 g abgetropfte Kichererbsen, 1/2 Zwiebel ca. 50 g, 1/4 Dose geschälte Tomaten ca. 100 g, 100 g frischer oder TK-Spinat, Milbona Bio griechischer Feta 50 g, 10 g Olivenöl. Mit 40 g Feta ca. 437 kcal, 19 g Protein und 23 g Fett.",
+    servingBase: 1,
+    items: [
+      ["Kichererbsen, abgetropft", 120, "g"],
+      ["Zwiebel", 0.5, "Stück"],
+      ["Knoblauch", 1, "Zehe"],
+      ["Tomatenmark", 0.5, "EL"],
+      ["Geschälte Tomaten", 0.25, "Dose"],
+      ["Spinat", 100, "g"],
+      ["Olivenöl", 10, "g"],
+      ["Feta", 50, "g"],
+      ["Paprikapulver edelsüß", 0.25, "TL"],
+      ["Zimt", 1, "Prise"],
+      ["Kreuzkümmel", 0.0625, "TL"]
+    ],
+    nutrients: [
+      ["calories", "Kalorien", 465, "kcal", "macro"],
+      ["protein", "Protein", 21, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 39, "g", "macro"],
+      ["fat", "Fett", 25, "g", "macro"],
+      ["fiber", "Ballaststoffe", 12, "g", "macro"],
+      ["salt", "Salz", 1.5, "g", "macro"]
+    ]
+  });
+
+  upsertRecipe(db, {
+    name: "Ofenlachs mit Brokkoli, Paprika & Reis",
+    category: "lunch",
+    instructions: "Reis waschen und nach Packungsangabe kochen. Backofen auf 180-200 °C Umluft vorheizen. Brokkoli in Röschen teilen und Paprika in Streifen schneiden. Gemüse mit etwa 5 g Olivenöl, Salz, Pfeffer und Paprikapulver vermengen. Lachs mit etwa 5 g Olivenöl, Zitronensaft, fein gehacktem Knoblauch, Salz und Pfeffer würzen. Gemüse und Lachs in eine Auflaufform oder auf ein Backblech geben. Ca. 15-18 Minuten backen, bis der Lachs gar ist. Mit Reis servieren.",
+    prepNotes: "Annahmen: 125 g Lachsfilet, 60 g Reis trocken, 1/2 kleiner Brokkoli ca. 150 g, 1/2 Paprika ca. 75 g, 10 g Olivenöl.",
+    servingBase: 1,
+    items: [
+      ["Lachsfilet", 125, "g"],
+      ["Reis, trocken", 60, "g"],
+      ["Brokkoli", 0.5, "kleiner Kopf"],
+      ["Paprika", 0.5, "Stück"],
+      ["Knoblauch", 1, "kleine Zehe"],
+      ["Olivenöl", 10, "g"],
+      ["Zitronensaft", 1, "TL"],
+      ["Paprikapulver edelsüß", 0.5, "TL"]
+    ],
+    nutrients: [
+      ["calories", "Kalorien", 560, "kcal", "macro"],
+      ["protein", "Protein", 33, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 56, "g", "macro"],
+      ["fat", "Fett", 22, "g", "macro"],
+      ["fiber", "Ballaststoffe", 7, "g", "macro"]
+    ]
+  });
+
+  upsertRecipe(db, {
+    name: "Super-Veggie-Bowl mit Beluga-Linsen",
+    category: "lunch",
+    instructions: "Beluga-Linsen waschen und 20-25 Minuten kochen, erst gegen Ende salzen. Brokkoli und Blumenkohl in Röschen teilen und 5-8 Minuten dämpfen oder kochen. Champignons in Scheiben schneiden und kräftig anbraten. Knoblauch und Ingwer fein hacken und am Ende kurz zu den Champignons geben. Olivenöl, Zitronensaft, Salz und Pfeffer verrühren. Linsen, Gemüse, Champignons und Dressing vermengen und Hanfsamen darüberstreuen.",
+    prepNotes: "Kleinere ballaststoffreiche Portion. Küchenmaß-Annahmen: 1/2 kleiner Brokkoli ca. 150 g, 1/4 kleiner Blumenkohl ca. 100 g, 100 g Champignons, 15 g Olivenöl, 35 g Beluga-Linsen trocken, 10 g Hanfsamen.",
+    servingBase: 1,
+    items: [
+      ["Beluga-Linsen, trocken", 35, "g"],
+      ["Brokkoli", 0.5, "kleiner Kopf"],
+      ["Blumenkohl", 0.25, "kleiner Kopf"],
+      ["Champignons", 100, "g"],
+      ["Knoblauch", 1, "kleine Zehe"],
+      ["Ingwer", 2, "g"],
+      ["Kreuzkümmel", 0.125, "TL"],
+      ["Hanfsamen", 10, "g"],
+      ["Olivenöl", 15, "g"],
+      ["Zitronensaft", 1, "TL"]
+    ],
+    nutrients: [
+      ["calories", "Kalorien", 445, "kcal", "macro"],
+      ["protein", "Protein", 20, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 43, "g", "macro"],
+      ["fat", "Fett", 23, "g", "macro"],
+      ["fiber", "Ballaststoffe", 16, "g", "macro"]
     ]
   });
 

@@ -9,6 +9,8 @@ struct ContentView: View {
     @AppStorage("lastHabitSyncAt") private var lastHabitSyncAt = ""
     @AppStorage("localHabitsJson") private var localHabitsJson = ""
     @AppStorage("localHabitEntriesJson") private var localHabitEntriesJson = ""
+    @AppStorage("localRecipesJson") private var localRecipesJson = ""
+    @AppStorage("lastRecipeSyncAt") private var lastRecipeSyncAt = ""
 
     @State private var status = "Bereit."
     @State private var habitStatus = ""
@@ -22,6 +24,9 @@ struct ContentView: View {
     @State private var shoppingStatus = ""
     @State private var isShoppingWorking = false
     @State private var selectedReminderCalendarIdentifier = ""
+    @State private var recipes: [Recipe] = []
+    @State private var selectedRecipeIds: Set<Int> = []
+    @State private var recipePortionsById: [Int: Int] = [:]
     @StateObject private var reminderService = ReminderExportService()
 
     private let healthKit = HealthKitSyncService()
@@ -51,8 +56,10 @@ struct ContentView: View {
             .onOpenURL(perform: handlePairingUrl)
             .task {
                 loadLocalHabits()
+                loadLocalRecipes()
                 await bidirectionalHabitSync()
                 await fetchPendingShoppingListExports()
+                await refreshRecipesFromServer()
             }
         }
     }
@@ -165,75 +172,147 @@ struct ContentView: View {
                     Text("Einkaufsliste")
                         .font(.largeTitle.weight(.bold))
                         .foregroundStyle(.black)
-                    Text("Aus dem Web-Dashboard bereitgestellte Listen in Apple Erinnerungen übernehmen.")
+                    Text("Rezepte lokal auswählen und in Apple Erinnerungen übernehmen.")
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.mutedText)
                 }
 
-                HealthCard {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Label("\(shoppingExports.count) offen", systemImage: "cart")
-                                .font(.headline)
-                                .foregroundStyle(.black)
-                            Spacer()
-                            Button {
-                                Task { await fetchPendingShoppingListExports() }
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.black)
-                            .disabled(isShoppingWorking || !isPaired)
-                        }
-
-                        if !isPaired {
-                            Text("Kopple die App zuerst mit dem lokalen Dashboard, damit pending Einkaufslisten geladen werden können.")
-                                .font(.callout)
-                                .foregroundStyle(AppTheme.mutedText)
-                        } else if shoppingExports.isEmpty {
-                            Text("Keine pending Einkaufsliste. Erzeuge sie im Web unter Meal-Prep Frühstücke.")
-                                .font(.callout)
-                                .foregroundStyle(AppTheme.mutedText)
-                        } else {
-                            if reminderService.reminderLists.isEmpty {
-                                Button {
-                                    Task { await loadReminderListsForShopping() }
-                                } label: {
-                                    Label("Erinnerungen-Listen laden", systemImage: "list.bullet")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.black)
-                                .disabled(isShoppingWorking)
-                            }
-
-                            VStack(spacing: 12) {
-                                ForEach(shoppingExports) { export in
-                                    ShoppingExportCard(
-                                        export: export,
-                                        reminderLists: reminderService.reminderLists,
-                                        selectedReminderCalendarIdentifier: $selectedReminderCalendarIdentifier,
-                                        isWorking: isShoppingWorking,
-                                        onImport: {
-                                            Task { await importShoppingListExport(export) }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        if !shoppingStatus.isEmpty {
-                            Text(shoppingStatus)
-                                .font(.footnote)
-                                .foregroundStyle(AppTheme.mutedText)
-                        }
-                    }
-                }
+                recipePickerCard
+                pendingShoppingExportsCard
             }
             .padding()
         }
         .background(Color.white)
+    }
+
+    private var recipePickerCard: some View {
+        HealthCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Rezepte", systemImage: "fork.knife")
+                            .font(.headline)
+                            .foregroundStyle(.black)
+                        Text(recipeSyncSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.mutedText)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await refreshRecipesFromServer(forceStatus: true) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.black)
+                    .disabled(isShoppingWorking || !isPaired)
+                    .accessibilityLabel("Rezepte aktualisieren")
+                }
+
+                if recipes.isEmpty {
+                    Text(isPaired ? "Noch keine Rezepte im iPhone-Cache. Tippe auf Aktualisieren, solange der lokale Server erreichbar ist." : "Kopple die App zuerst einmal mit dem Dashboard, um Rezepte auf das iPhone zu laden.")
+                        .font(.callout)
+                        .foregroundStyle(AppTheme.mutedText)
+                } else {
+                    VStack(spacing: 10) {
+                        ForEach(recipes) { recipe in
+                            RecipeSelectionRow(
+                                recipe: recipe,
+                                isSelected: recipeSelectionBinding(recipe),
+                                portions: recipePortionsBinding(recipe)
+                            )
+                        }
+                    }
+
+                    if let export = localRecipeShoppingExport {
+                        LocalShoppingPreviewCard(
+                            export: export,
+                            reminderLists: reminderService.reminderLists,
+                            selectedReminderCalendarIdentifier: $selectedReminderCalendarIdentifier,
+                            isWorking: isShoppingWorking,
+                            onLoadReminderLists: {
+                                Task { await loadReminderListsForShopping() }
+                            },
+                            onImport: {
+                                Task { await importLocalRecipeShoppingList(export) }
+                            }
+                        )
+                    } else {
+                        Text("Wähle mindestens ein Rezept aus, um lokal eine Einkaufsliste zu erzeugen.")
+                            .font(.callout)
+                            .foregroundStyle(AppTheme.mutedText)
+                    }
+                }
+            }
+        }
+    }
+
+    private var pendingShoppingExportsCard: some View {
+        HealthCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("\(shoppingExports.count) Web-Liste\(shoppingExports.count == 1 ? "" : "n") offen", systemImage: "cart")
+                        .font(.headline)
+                        .foregroundStyle(.black)
+                    Spacer()
+                    Button {
+                        Task { await fetchPendingShoppingListExports() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.black)
+                    .disabled(isShoppingWorking || !isPaired)
+                    .accessibilityLabel("Pending Web-Einkaufslisten aktualisieren")
+                }
+
+                Text("Optional: Aus dem Web-Dashboard bereitgestellte Listen übernehmen.")
+                    .font(.callout)
+                    .foregroundStyle(AppTheme.mutedText)
+
+                if !isPaired {
+                    Text("Kopple die App zuerst mit dem lokalen Dashboard, damit pending Einkaufslisten geladen werden können.")
+                        .font(.callout)
+                        .foregroundStyle(AppTheme.mutedText)
+                } else if shoppingExports.isEmpty {
+                    Text("Keine pending Einkaufsliste aus dem Web.")
+                        .font(.callout)
+                        .foregroundStyle(AppTheme.mutedText)
+                } else {
+                    if reminderService.reminderLists.isEmpty {
+                        Button {
+                            Task { await loadReminderListsForShopping() }
+                        } label: {
+                            Label("Erinnerungen-Listen laden", systemImage: "list.bullet")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.black)
+                        .disabled(isShoppingWorking)
+                    }
+
+                    VStack(spacing: 12) {
+                        ForEach(shoppingExports) { export in
+                            ShoppingExportCard(
+                                export: export,
+                                reminderLists: reminderService.reminderLists,
+                                selectedReminderCalendarIdentifier: $selectedReminderCalendarIdentifier,
+                                isWorking: isShoppingWorking,
+                                onImport: {
+                                    Task { await importShoppingListExport(export) }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if !shoppingStatus.isEmpty {
+                    Text(shoppingStatus)
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.mutedText)
+                }
+            }
+        }
     }
 
     private var headerCard: some View {
@@ -486,6 +565,52 @@ struct ContentView: View {
         activeHabits.filter { isHabitCompleted($0) }.count
     }
 
+    private var recipeSyncSubtitle: String {
+        if recipes.isEmpty {
+            return "Noch kein lokaler Rezeptcache."
+        }
+        guard let date = isoFormatter.date(from: lastRecipeSyncAt) else {
+            return "\(recipes.count) Rezepte lokal verfügbar."
+        }
+        return "\(recipes.count) Rezepte · aktualisiert \(date.formatted(.dateTime.day().month().hour().minute()))"
+    }
+
+    private var localRecipeShoppingExport: ShoppingListExport? {
+        let selections = recipes.compactMap { recipe -> RecipeSelection? in
+            guard selectedRecipeIds.contains(recipe.id) else { return nil }
+            return RecipeSelection(recipe: recipe, portions: normalizedPortions(recipePortionsById[recipe.id] ?? 1))
+        }
+        guard !selections.isEmpty else { return nil }
+        return LocalShoppingListBuilder.generate(from: selections, createdAt: isoFormatter.string(from: Date()))
+    }
+
+    private func recipeSelectionBinding(_ recipe: Recipe) -> Binding<Bool> {
+        Binding(
+            get: { selectedRecipeIds.contains(recipe.id) },
+            set: { selected in
+                if selected {
+                    selectedRecipeIds.insert(recipe.id)
+                    recipePortionsById[recipe.id] = normalizedPortions(recipePortionsById[recipe.id] ?? 1)
+                } else {
+                    selectedRecipeIds.remove(recipe.id)
+                }
+            }
+        )
+    }
+
+    private func recipePortionsBinding(_ recipe: Recipe) -> Binding<Int> {
+        Binding(
+            get: { normalizedPortions(recipePortionsById[recipe.id] ?? 1) },
+            set: { portions in
+                recipePortionsById[recipe.id] = normalizedPortions(portions)
+            }
+        )
+    }
+
+    private func normalizedPortions(_ value: Int) -> Int {
+        min(99, max(1, value))
+    }
+
     @MainActor
     private func fetchPendingShoppingListExports() async {
         guard isPaired else { return }
@@ -496,6 +621,51 @@ struct ContentView: View {
             shoppingStatus = shoppingExports.isEmpty ? "Keine pending Einkaufsliste." : "Pending Einkaufslisten geladen."
         } catch {
             shoppingStatus = "Einkaufslisten-Sync fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadLocalRecipes() {
+        let decoder = JSONDecoder()
+        guard let data = localRecipesJson.data(using: .utf8),
+              let decoded = try? decoder.decode([Recipe].self, from: data) else {
+            recipes = []
+            return
+        }
+        recipes = decoded
+        for recipe in decoded {
+            recipePortionsById[recipe.id] = normalizedPortions(recipePortionsById[recipe.id] ?? 1)
+        }
+    }
+
+    private func saveLocalRecipes() {
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(recipes),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        localRecipesJson = json
+    }
+
+    @MainActor
+    private func refreshRecipesFromServer(forceStatus: Bool = false) async {
+        guard isPaired else { return }
+        isShoppingWorking = true
+        defer { isShoppingWorking = false }
+
+        do {
+            let fetched = try await api.fetchRecipes(config: currentConfig)
+            recipes = fetched
+            for recipe in fetched {
+                recipePortionsById[recipe.id] = normalizedPortions(recipePortionsById[recipe.id] ?? 1)
+            }
+            selectedRecipeIds = selectedRecipeIds.filter { id in fetched.contains(where: { $0.id == id }) }
+            lastRecipeSyncAt = isoFormatter.string(from: Date())
+            saveLocalRecipes()
+            shoppingStatus = "Rezepte aktualisiert: \(fetched.count) lokal gespeichert."
+        } catch {
+            if forceStatus || recipes.isEmpty {
+                shoppingStatus = "Rezepte konnten nicht aktualisiert werden. Lokaler Cache bleibt verfügbar: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -560,6 +730,33 @@ struct ContentView: View {
         } catch {
             shoppingStatus = "Reminder-Export fehlgeschlagen: \(error.localizedDescription)"
             try? await api.reportShoppingListExportError(id: export.id, message: error.localizedDescription, config: currentConfig)
+        }
+    }
+
+    @MainActor
+    private func importLocalRecipeShoppingList(_ export: ShoppingListExport) async {
+        isShoppingWorking = true
+        defer { isShoppingWorking = false }
+
+        do {
+            guard try await reminderService.requestAccessIfNeeded() else {
+                shoppingStatus = "Zugriff auf Apple Erinnerungen wurde nicht erlaubt."
+                return
+            }
+
+            guard let calendar = reminderService.calendar(
+                preferredIdentifier: selectedReminderCalendarIdentifier,
+                preferredName: "Einkauf"
+            ) else {
+                shoppingStatus = "Keine beschreibbare Erinnerungen-Liste gefunden."
+                return
+            }
+
+            selectedReminderCalendarIdentifier = calendar.calendarIdentifier
+            let createdCount = try reminderService.createReminders(from: export.items, in: calendar, exportId: export.id)
+            shoppingStatus = "\(createdCount) Erinnerungen aus lokalen Rezepten in „\(calendar.title)” erstellt."
+        } catch {
+            shoppingStatus = "Lokaler Reminder-Import fehlgeschlagen: \(error.localizedDescription)"
         }
     }
 
@@ -675,6 +872,7 @@ struct ContentView: View {
         Task {
             await bidirectionalHabitSync()
             await fetchPendingShoppingListExports()
+            await refreshRecipesFromServer(forceStatus: true)
         }
     }
 
@@ -1029,6 +1227,122 @@ private struct DateButton: View {
     }
 }
 
+private struct RecipeSelectionRow: View {
+    let recipe: Recipe
+    @Binding var isSelected: Bool
+    @Binding var portions: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $isSelected) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recipe.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.black)
+                    Text(recipeSummary)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.mutedText)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.black)
+
+            if isSelected {
+                Stepper(value: $portions, in: 1...99) {
+                    Text("\(portions) Portion\(portions == 1 ? "" : "en")")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.black)
+                }
+                .tint(.black)
+            }
+        }
+        .padding(12)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.black.opacity(0.08)))
+    }
+
+    private var recipeSummary: String {
+        let calories = recipe.nutrientsPerServing.first(where: { $0.key == "calories" })?.amount
+        let protein = recipe.nutrientsPerServing.first(where: { $0.key == "protein" })?.amount
+        let caloriesText = calories.map { "\(Int($0.rounded())) kcal" }
+        let proteinText = protein.map { "\(LocalShoppingListBuilder.formatAmount($0)) g Protein" }
+        return [recipe.category, caloriesText, proteinText].compactMap(\.self).joined(separator: " · ")
+    }
+}
+
+private struct LocalShoppingPreviewCard: View {
+    let export: ShoppingListExport
+    let reminderLists: [EKCalendar]
+    @Binding var selectedReminderCalendarIdentifier: String
+    let isWorking: Bool
+    let onLoadReminderLists: () -> Void
+    let onImport: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Lokale Einkaufsliste")
+                        .font(.headline)
+                        .foregroundStyle(.black)
+                    Text("\(export.items.count) Einträge aus ausgewählten Rezepten")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.mutedText)
+                }
+                Spacer()
+            }
+
+            if reminderLists.isEmpty {
+                Button(action: onLoadReminderLists) {
+                    Label("Erinnerungen-Listen laden", systemImage: "list.bullet")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.black)
+                .disabled(isWorking)
+            } else {
+                Picker("Ziel-Liste", selection: $selectedReminderCalendarIdentifier) {
+                    Text("Automatisch").tag("")
+                    ForEach(reminderLists, id: \.calendarIdentifier) { list in
+                        Text(list.title).tag(list.calendarIdentifier)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.black)
+            }
+
+            DisclosureGroup("Vorschau") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(export.items) { item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ReminderExportService.formatReminderTitle(item))
+                                .font(.body)
+                                .foregroundStyle(.black)
+                            if let sources = item.sourceRecipeNames, !sources.isEmpty {
+                                Text("Quelle: \(sources.joined(separator: ", "))")
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.mutedText)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .tint(.black)
+
+            Button(action: onImport) {
+                Label(isWorking ? "Übernehme..." : "In Erinnerungen übernehmen", systemImage: "plus.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.black)
+            .disabled(isWorking || export.items.isEmpty)
+        }
+    }
+}
+
 private struct ShoppingExportCard: View {
     let export: ShoppingListExport
     let reminderLists: [EKCalendar]
@@ -1205,6 +1519,166 @@ private final class ReminderExportService: ObservableObject {
             return String(Int(value))
         }
         return value.formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "de_DE")))
+    }
+}
+
+private enum LocalShoppingListBuilder {
+    static func generate(from selections: [RecipeSelection], createdAt: String) -> ShoppingListExport {
+        var merged: [String: ShoppingListExportItem] = [:]
+
+        for selection in selections {
+            let factor = Double(max(1, selection.portions)) / max(selection.recipe.servingBase, 0.0001)
+            for item in selection.recipe.items {
+                let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { continue }
+
+                let unit = item.unit.trimmingCharacters(in: .whitespacesAndNewlines)
+                let category = categorize(name)
+                let key = "\(normalize(name))|\(unit.lowercased())|\(category)"
+                let amount = roundAmount(item.amount * factor)
+
+                if var existing = merged[key] {
+                    existing.amount = roundAmount((existing.amount ?? 0) + amount)
+                    existing.sourceRecipeNames = unique((existing.sourceRecipeNames ?? []) + [selection.recipe.name])
+                    if item.excludeFromNutrition {
+                        existing.note = "In Rezept sichtbar, nicht in Nährwerten enthalten."
+                    }
+                    merged[key] = existing
+                } else {
+                    merged[key] = ShoppingListExportItem(
+                        id: "item_\(slugify("\(name)-\(unit)-\(category)"))",
+                        name: name,
+                        amount: amount,
+                        unit: unit,
+                        category: category,
+                        note: item.excludeFromNutrition ? "In Rezept sichtbar, nicht in Nährwerten enthalten." : nil,
+                        sourceRecipeNames: [selection.recipe.name]
+                    )
+                }
+            }
+        }
+
+        let items = merged.values.sorted(by: compareItems)
+        let recipeSnapshot = selections
+            .map { "\($0.recipe.id)-\($0.portions)" }
+            .joined(separator: "-")
+        return ShoppingListExport(
+            id: "local_recipe_\(slugify(recipeSnapshot.isEmpty ? createdAt : recipeSnapshot))",
+            title: "Einkaufsliste",
+            items: items,
+            createdAt: createdAt,
+            consumedAt: nil
+        )
+    }
+
+    static func formatAmount(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return value.formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "de_DE")))
+    }
+
+    private static let categoryOrder = ["Obst & Gemüse", "Milchprodukte", "Trockenwaren", "Fleisch/Fisch", "Sonstiges"]
+
+    private static func categorize(_ name: String) -> String {
+        let normalized = normalize(name)
+        if normalized.contains("paprikapulver") {
+            return "Sonstiges"
+        }
+
+        if [
+            "heidelbeeren",
+            "brombeeren",
+            "banane",
+            "avocado",
+            "spinat",
+            "apfel",
+            "birne",
+            "zitronensaft",
+            "zitrone",
+            "brokkoli",
+            "blumenkohl",
+            "champignons",
+            "knoblauch",
+            "gurke",
+            "ingwer",
+            "paprika",
+            "tomaten",
+            "zwiebel",
+            "erdbeeren",
+            "kiwi"
+        ].contains(where: { normalized.contains($0) }) {
+            return "Obst & Gemüse"
+        }
+
+        if ["milch", "joghurt", "skyr", "feta"].contains(where: { normalized.contains($0) }) {
+            return "Milchprodukte"
+        }
+
+        if [
+            "haferflocken",
+            "chiasamen",
+            "whey",
+            "inulin",
+            "kreatin",
+            "zucker",
+            "linsen",
+            "kichererbsen",
+            "quinoa",
+            "reis",
+            "rosinen",
+            "mandeln",
+            "nüsse"
+        ].contains(where: { normalized.contains($0) }) {
+            return "Trockenwaren"
+        }
+
+        if normalized.contains("lachs") {
+            return "Fleisch/Fisch"
+        }
+
+        return "Sonstiges"
+    }
+
+    private static func compareItems(_ left: ShoppingListExportItem, _ right: ShoppingListExportItem) -> Bool {
+        let leftCategory = categoryOrder.firstIndex(of: left.category ?? "Sonstiges") ?? categoryOrder.count
+        let rightCategory = categoryOrder.firstIndex(of: right.category ?? "Sonstiges") ?? categoryOrder.count
+        if leftCategory != rightCategory {
+            return leftCategory < rightCategory
+        }
+        return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    private static func slugify(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "äöüß"))
+        return value
+            .lowercased()
+            .unicodeScalars
+            .map { allowed.contains($0) ? Character($0) : "-" }
+            .reduce(into: "") { result, character in
+                if character == "-", result.last == "-" {
+                    return
+                }
+                result.append(character)
+            }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    private static func roundAmount(_ value: Double) -> Double {
+        (value * 100).rounded() / 100
+    }
+
+    private static func unique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
     }
 }
 
