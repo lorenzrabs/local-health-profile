@@ -17,3 +17,7 @@ The category includes Breathe and other mindful sessions; it is not a verified B
 ## Validation on the Mac mini
 
 The changed Swift file passed a syntax parse. Xcode and the iOS SDK are not installed there: device compilation, signing and a real HealthKit permission/sync test remain to be completed on the MacBook/iPhone.
+
+## Rezepte und Einkaufsliste
+
+Nach diesem Update lädt die App Rezepte vom Server in einen lokalen Cache. Im Tab Einkaufsliste können Rezepte und Portionen ausgewählt und Zutaten in Apple Erinnerungen übernommen werden. Nach einmaliger Aktualisierung der Rezepte funktioniert diese Auswahl auch ohne Serververbindung. Die vorhandenen Web-Einkaufslisten bleiben zusätzlich verfügbar. Die Übernahme in Erinnerungen erfolgt nur über die entsprechende Schaltfläche.

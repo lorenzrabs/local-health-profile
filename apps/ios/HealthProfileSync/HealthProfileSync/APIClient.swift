@@ -146,6 +146,19 @@ final class APIClient {
         return try JSONDecoder().decode(ShoppingListExportsResponse.self, from: data).exports
     }
 
+    func fetchRecipes(config: PairingConfig) async throws -> [Recipe] {
+        let normalizedConfig = try normalize(config: config)
+        let url = try url(for: "/api/recipes", queryItems: [URLQueryItem(name: "servings", value: "1")], config: normalizedConfig)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(normalizedConfig.token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw APIClientError.badStatus(status, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try JSONDecoder().decode([Recipe].self, from: data)
+    }
+
     func markShoppingListExportConsumed(
         id: String,
         createdReminderCount: Int,

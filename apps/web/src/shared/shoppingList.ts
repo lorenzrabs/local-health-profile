@@ -81,6 +81,10 @@ export const SHOPPING_CATEGORIES = ["Obst & Gemüse", "Milchprodukte", "Trockenw
 
 function categorizeIngredient(name: string) {
   const normalized = normalizeIngredientName(name);
+  if (["paprikapulver"].some((needle) => normalized.includes(needle))) {
+    return "Sonstiges";
+  }
+
   if (
     [
       "heidelbeeren",
@@ -94,7 +98,13 @@ function categorizeIngredient(name: string) {
       "zitrone",
       "brokkoli",
       "blumenkohl",
+      "champignons",
+      "knoblauch",
+      "gurke",
+      "ingwer",
       "paprika",
+      "tomaten",
+      "zwiebel",
       "erdbeeren",
       "kiwi"
     ].some((needle) => normalized.includes(needle))
@@ -102,12 +112,20 @@ function categorizeIngredient(name: string) {
     return "Obst & Gemüse";
   }
 
-  if (["milch", "joghurt", "skyr"].some((needle) => normalized.includes(needle))) {
+  if (["milch", "joghurt", "skyr", "feta"].some((needle) => normalized.includes(needle))) {
     return "Milchprodukte";
   }
 
-  if (["haferflocken", "chiasamen", "whey", "inulin", "kreatin", "zucker", "linsen", "rosinen", "mandeln", "nüsse"].some((needle) => normalized.includes(needle))) {
+  if (
+    ["haferflocken", "chiasamen", "whey", "inulin", "kreatin", "zucker", "linsen", "kichererbsen", "quinoa", "reis", "rosinen", "mandeln", "nüsse"].some(
+      (needle) => normalized.includes(needle)
+    )
+  ) {
     return "Trockenwaren";
+  }
+
+  if (["lachs"].some((needle) => normalized.includes(needle))) {
+    return "Fleisch/Fisch";
   }
 
   return "Sonstiges";
