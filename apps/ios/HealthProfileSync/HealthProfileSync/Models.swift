@@ -1,6 +1,6 @@
 import Foundation
 
-struct PairingConfig: Codable {
+struct PairingConfig: Codable, Equatable {
     var serverUrl: String
     var token: String
 }
@@ -135,6 +135,50 @@ struct HabitSyncResponse: Codable {
     var entries: [HabitEntry]
 }
 
+// Keep a habit tap local and small; the full bidirectional sync is only needed on launch/manual refresh.
+enum HabitTogglePlan {
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let plainFormatter = ISO8601DateFormatter()
+
+    static func timestamp(_ value: String) -> TimeInterval {
+        (fractionalFormatter.date(from: value) ?? plainFormatter.date(from: value))?.timeIntervalSince1970 ?? 0
+    }
+
+    static func matches(_ entry: HabitEntry, habit: HabitDefinition, date: String) -> Bool {
+        let sameHabit = (!entry.habitClientId.isEmpty && entry.habitClientId == habit.clientId) || (habit.id > 0 && entry.habitId == habit.id)
+        return sameHabit && entry.date == date
+    }
+
+    static func replacing(_ entries: [HabitEntry], habit: HabitDefinition, date: String, completed: Bool, updatedAt: String) -> [HabitEntry] {
+        var result = entries
+        let entry = HabitEntry(habitId: habit.id, habitClientId: habit.clientId, date: date, completed: completed, updatedAt: updatedAt)
+        if let index = result.firstIndex(where: { matches($0, habit: habit, date: date) }) {
+            result[index] = entry
+        } else {
+            result.append(entry)
+        }
+        return result
+    }
+
+    static func request(for entry: HabitEntry, since: String?) -> HabitSyncPayload {
+        HabitSyncPayload(
+            since: since,
+            definitions: [],
+            entries: [HabitEntryPayload(
+                habitId: entry.habitId > 0 ? entry.habitId : nil,
+                habitClientId: entry.habitClientId,
+                date: entry.date,
+                completed: entry.completed,
+                updatedAt: entry.updatedAt
+            )]
+        )
+    }
+}
+
 struct ShoppingListExportsResponse: Codable {
     var exports: [ShoppingListExport]
 }
@@ -203,4 +247,10 @@ struct RecipeNutrient: Codable, Equatable {
 struct RecipeSelection: Equatable {
     var recipe: Recipe
     var portions: Int
+}
+
+enum RecipePresentation {
+    static func nutrientTotal(perServing: Double, portions: Int) -> Double {
+        perServing * Double(min(99, max(1, portions)))
+    }
 }

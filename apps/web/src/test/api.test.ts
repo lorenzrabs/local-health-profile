@@ -94,6 +94,26 @@ describe("API", () => {
     expect(pairing.pairingUrl).toContain(encodeURIComponent("http://health.local"));
   });
 
+  it("returns only habit changes since the supplied sync cursor after a POST", async () => {
+    const db = openDatabase(":memory:");
+    const definition = db.prepare("SELECT id, client_id FROM habit_definitions ORDER BY id LIMIT 1").get() as { id: number; client_id: string };
+    db.prepare("INSERT INTO habit_entries (habit_id, date, completed, updated_at) VALUES (?, ?, ?, ?)").run(definition.id, "2026-04-20", 1, "2026-04-20T12:00:00.000Z");
+    const app = await createApp(db, { port: 0, dev: false });
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing test server address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const response = await fetch(`${baseUrl}/api/habits/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ since: "2026-04-22T00:00:00.000Z", entries: [{ habitId: definition.id, habitClientId: definition.client_id, date: "2026-04-23", completed: true, updatedAt: "2026-04-23T12:00:00.000Z" }] })
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json() as { entries: Array<{ date: string }> };
+    expect(result.entries.map((entry) => entry.date)).toEqual(["2026-04-23"]);
+  });
+
   it("serves and upserts habit definitions and entries", async () => {
     const app = await createApp(openDatabase(":memory:"), { port: 0, dev: false });
     const server = app.listen(0);

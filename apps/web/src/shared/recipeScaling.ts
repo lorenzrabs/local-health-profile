@@ -13,7 +13,7 @@ export function scaleRecipe(recipe: Recipe, servings: number): Recipe {
     })),
     scaledNutrients: recipe.nutrientsPerServing.map((nutrient): RecipeScaledNutrient => ({
       ...nutrient,
-      totalAmount: roundValue(nutrient.amount * factor)
+      totalAmount: roundValue(nutrient.amount * normalizedServings)
     }))
   };
 }

@@ -89,7 +89,7 @@ export function getRecipes(db: AppDatabase, servings = 1): Recipe[] {
             (nutrient): RecipeNutrient => ({
               key: nutrient.nutrient_key,
               label: nutrient.label,
-              amount: nutrient.amount_per_serving,
+              amount: nutrient.amount_per_serving / recipe.serving_base,
               unit: nutrient.unit,
               category: nutrient.category
             })

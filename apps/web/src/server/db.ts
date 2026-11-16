@@ -500,6 +500,66 @@ function seed(db: AppDatabase) {
     ]
   });
 
+  upsertRecipe(db, {
+    name: "Zitronen-Orzo mit Zucchini, Erbsen & Feta",
+    category: "lunch",
+    instructions: "Zwiebel und Knoblauch fein würfeln, Zucchini in etwa 1 cm große Würfel schneiden. Olivenöl in einer tiefen Pfanne erhitzen; Zwiebel 2 Minuten anschwitzen, Zucchini 4 Minuten anbraten. Knoblauch und trockene Orzo-Nudeln dazugeben und 1 Minute unter Rühren anschwitzen. Gemüsebrühe und Oregano hinzufügen, 10–12 Minuten bei mittlerer Hitze offen köcheln; regelmäßig umrühren und bei Bedarf Wasser ergänzen. TK-Erbsen in den letzten 4–5 Minuten mitgaren. Vom Herd nehmen, Abrieb einer halben Zitrone und zunächst 1 EL Zitronensaft unterrühren. Feta zerbröseln und unterheben; mit Salz, Pfeffer und optional Petersilie abschmecken.",
+    prepNotes: "Vegetarisch · One-Pot · 2 sättigende Portionen. 2–3 Tage gekühlt haltbar; Orzo saugt Flüssigkeit auf. Beim Aufwärmen 30–50 ml Wasser pro Portion zugeben und Zitronensaft möglichst erst danach ergänzen. Nährwerte sind Näherungswerte inklusive Öl.",
+    servingBase: 2,
+    items: [
+      ["Orzo / Kritharaki, trocken", 160, "g"], ["Zucchini", 250, "g"], ["TK-Erbsen", 150, "g"],
+      ["Feta", 100, "g"], ["Zwiebel", 80, "g"], ["Knoblauch", 2, "Zehen"],
+      ["Gemüsebrühe", 400, "ml"], ["Olivenöl", 10, "g"], ["Bio-Zitrone", 1, "Stück"],
+      ["Oregano, getrocknet", 1, "TL"], ["Salz und Pfeffer", 1, "nach Geschmack", true],
+      ["Petersilie (optional)", 10, "g"]
+    ],
+    nutrients: [
+      ["calories", "Kalorien", 1300, "kcal", "macro"], ["protein", "Protein", 54, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 164, "g", "macro"], ["fat", "Fett", 46, "g", "macro"]
+    ]
+  });
+
+  upsertRecipe(db, {
+    name: "Rotes Linsen-Dal mit Kokosmilch & Blumenkohl",
+    category: "lunch",
+    instructions: "Backofen auf 220 °C Ober-/Unterhitze vorheizen. Blumenkohl in kleine Röschen teilen, mit 5 g Olivenöl, Salz und ½ TL Kreuzkümmel mischen und auf dem Blech 25 Minuten rösten. Reis mit 150 ml Wasser und Salz aufkochen, zugedeckt 10–12 Minuten bei niedriger Hitze garen, danach 5 Minuten ruhen lassen. Zwiebel, Knoblauch und Ingwer fein hacken. Restliches Öl im Topf erhitzen, Zwiebel 3 Minuten anschwitzen, Knoblauch und Ingwer 1 Minute mitbraten. Curry, übrigen Kreuzkümmel und Kurkuma 30 Sekunden anrösten. Linsen abspülen; mit Tomaten, Kokosmilch und Brühe hinzugeben. 15–20 Minuten sanft köcheln, gelegentlich umrühren. Mit Zitronen- oder Limettensaft, Salz, Pfeffer und Chili abschmecken; mit Reis und Blumenkohl servieren.",
+    prepNotes: "Vegan · 2 sättigende Portionen · 2–3 Tage gekühlt. Dal, Blumenkohl und Reis getrennt lagern. Zum Aufwärmen 2–3 EL Wasser zum Dal geben. Reis zügig abkühlen, sofort kühlen und innerhalb von 24 Stunden gründlich erhitzt verzehren; alternativ portionsweise einfrieren. Nährwerte sind Näherungswerte inklusive Reis und Öl; Kokosmilch variiert.",
+    servingBase: 2,
+    items: [
+      ["Rote Linsen, trocken", 150, "g"], ["Blumenkohl", 400, "g"],
+      ["Basmatireis, trocken", 100, "g"], ["Kokosmilch, normal", 200, "ml"],
+      ["Gehackte Tomaten", 200, "g"], ["Zwiebel", 100, "g"], ["Knoblauch", 2, "Zehen"],
+      ["Ingwer, frisch", 15, "g"], ["Gemüsebrühe", 300, "ml"], ["Olivenöl", 10, "g"],
+      ["Currypulver", 2, "TL"], ["Kreuzkümmel", 1, "TL"], ["Kurkuma", 0.5, "TL"],
+      ["Salz, Pfeffer und Chili", 1, "nach Geschmack", true], ["Zitronen- oder Limettensaft", 1, "EL"]
+    ],
+    nutrients: [
+      ["calories", "Kalorien", 1520, "kcal", "macro"], ["protein", "Protein", 58, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 204, "g", "macro"], ["fat", "Fett", 50, "g", "macro"]
+    ]
+  });
+
+  upsertRecipe(db, {
+    name: "Chili sin Carne mit Kidneybohnen & Mais",
+    category: "lunch",
+    instructions: "Zwiebel und Knoblauch fein hacken, Paprika klein würfeln; Kidneybohnen und Mais abgießen und abspülen. Öl im Topf erhitzen, Zwiebel 3 Minuten anschwitzen, Paprika 4 Minuten anbraten. Knoblauch und Tomatenmark 1 Minute anrösten, bis das Mark dunkler wird. Kreuzkümmel, geräuchertes Paprikapulver, Oregano und Chili einrühren. Gehackte Tomaten, Brühe, Bohnen und Mais zugeben, offen bei niedriger bis mittlerer Hitze 20 Minuten köcheln lassen; gelegentlich umrühren. Währenddessen Reis mit 150 ml Wasser und Salz garen. Chili mit Salz, Pfeffer und Limettensaft abschmecken. Optional 1–2 EL Bohnen zerdrücken, um es sämiger zu machen; mit Reis servieren.",
+    prepNotes: "Vegan · 2 sättigende Portionen. Chili 2–3 Tage gekühlt lagern oder portionsweise etwa 3 Monate einfrieren. Reis möglichst frisch zubereiten; andernfalls zügig abkühlen, direkt kühlen und innerhalb von 24 Stunden gründlich erhitzt verzehren oder gleich portionsweise einfrieren. Nährwerte sind Näherungswerte inklusive Reis und Öl.",
+    servingBase: 2,
+    items: [
+      ["Kidneybohnen, abgetropft", 240, "g"], ["Mais, abgetropft", 140, "g"],
+      ["Rote Paprika", 200, "g"], ["Gehackte Tomaten", 400, "g"],
+      ["Zwiebel", 100, "g"], ["Knoblauch", 2, "Zehen"], ["Tomatenmark", 25, "g"],
+      ["Basmatireis, trocken", 100, "g"], ["Gemüsebrühe", 100, "ml"],
+      ["Olivenöl", 10, "g"], ["Kreuzkümmel", 1, "TL"],
+      ["Paprikapulver, geräuchert", 1, "TL"], ["Oregano", 1, "TL"],
+      ["Chilipulver, Salz und Pfeffer", 1, "nach Geschmack", true], ["Limettensaft", 1, "EL"]
+    ],
+    nutrients: [
+      ["calories", "Kalorien", 1240, "kcal", "macro"], ["protein", "Protein", 46, "g", "macro"],
+      ["carbs", "Kohlenhydrate", 208, "g", "macro"], ["fat", "Fett", 18, "g", "macro"]
+    ]
+  });
+
   const insertSupplement = db.prepare(
     `INSERT OR IGNORE INTO supplements (name, default_dose, unit, timing, notes)
      VALUES (?, ?, ?, ?, ?)`
@@ -940,7 +1000,7 @@ export function syncHabitBatch(db: AppDatabase, payload: HabitSyncPayload): Habi
     }
   });
   tx();
-  return getHabitSyncState(db);
+  return getHabitSyncState(db, payload.since);
 }
 
 type HabitDefinitionRow = {

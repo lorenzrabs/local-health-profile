@@ -6,7 +6,6 @@ struct ContentView: View {
     @AppStorage("pairingToken") private var pairingToken = ""
     @AppStorage("lastSuccessfulHealthSyncAt") private var lastSuccessfulHealthSyncAt = ""
     @AppStorage("hasCompletedFullHealthSync") private var hasCompletedFullHealthSync = false
-    @AppStorage("lastHabitSyncAt") private var lastHabitSyncAt = ""
     @AppStorage("localHabitsJson") private var localHabitsJson = ""
     @AppStorage("localHabitEntriesJson") private var localHabitEntriesJson = ""
     @AppStorage("localRecipesJson") private var localRecipesJson = ""
@@ -906,18 +905,13 @@ struct ContentView: View {
     }
 
     private func setHabit(_ habit: HabitDefinition, completed: Bool) {
-        let now = isoFormatter.string(from: Date())
-        if let index = habitEntries.firstIndex(where: { ($0.habitClientId == habit.clientId || $0.habitId == habit.id) && $0.date == selectedHabitDateKey }) {
-            habitEntries[index].completed = completed
-            habitEntries[index].updatedAt = now
-            habitEntries[index].habitId = habit.id
-            habitEntries[index].habitClientId = habit.clientId
-        } else {
-            habitEntries.append(HabitEntry(habitId: habit.id, habitClientId: habit.clientId, date: selectedHabitDateKey, completed: completed, updatedAt: now))
-        }
-        habitEntries = Self.deduplicateEntries(habitEntries)
-        saveLocalHabits()
-        Task { await bidirectionalHabitSync() }
+        let date = selectedHabitDateKey
+        let previous = habitEntries.first { HabitTogglePlan.matches($0, habit: habit, date: date) }
+        let time = max(Date().timeIntervalSince1970, HabitTogglePlan.timestamp(previous?.updatedAt ?? "") + 0.001)
+        let entry = HabitEntry(habitId: habit.id, habitClientId: habit.clientId, date: date, completed: completed, updatedAt: isoFormatter.string(from: Date(timeIntervalSince1970: time)))
+        habitEntries = HabitTogglePlan.replacing(habitEntries, habit: habit, date: date, completed: completed, updatedAt: entry.updatedAt)
+        saveLocalHabitEntries()
+        Task { await syncHabitToggle(entry) }
     }
 
     @MainActor
@@ -999,8 +993,39 @@ struct ContentView: View {
         if let data = try? encoder.encode(habits), let json = String(data: data, encoding: .utf8) {
             localHabitsJson = json
         }
+        saveLocalHabitEntries()
+    }
+
+    private func saveLocalHabitEntries() {
+        let encoder = JSONEncoder()
         if let data = try? encoder.encode(habitEntries), let json = String(data: data, encoding: .utf8) {
             localHabitEntriesJson = json
+        }
+    }
+
+    @MainActor
+    private func syncHabitToggle(_ entry: HabitEntry) async {
+        guard isPaired else { return }
+        guard entry.habitId > 0 else {
+            // The server needs the definition before it can accept this offline habit's entry.
+            await bidirectionalHabitSync()
+            return
+        }
+        let config = currentConfig
+        do {
+            // A newer edit from another device may have won. Merge only this entry.
+            let response = try await api.syncHabits(HabitTogglePlan.request(for: entry, since: entry.updatedAt), config: config)
+            guard config == currentConfig else { return }
+            if let remote = response.entries.first(where: { $0.date == entry.date && $0.habitClientId == entry.habitClientId }),
+               let index = habitEntries.firstIndex(where: { $0.date == entry.date && $0.habitClientId == entry.habitClientId }),
+               Self.timestamp(remote.updatedAt) > Self.timestamp(habitEntries[index].updatedAt) {
+                habitEntries[index] = remote
+                saveLocalHabitEntries()
+            }
+            habitStatus = ""
+        } catch {
+            guard config == currentConfig else { return }
+            habitStatus = "Eintrag lokal gespeichert; Server-Sync fehlgeschlagen. Beim nächsten App-Start erneut versuchen: \(error.localizedDescription)"
         }
     }
 
@@ -1009,7 +1034,8 @@ struct ContentView: View {
         guard isPaired else { return }
         do {
             let payload = HabitSyncPayload(
-                since: lastHabitSyncAt.isEmpty ? nil : lastHabitSyncAt,
+                // A full reconciliation also repairs local history after a server restore or re-pairing.
+                since: nil,
                 definitions: habits.map {
                     HabitDefinitionPayload(
                         id: $0.id > 0 ? $0.id : nil,
@@ -1033,7 +1059,6 @@ struct ContentView: View {
             let response = try await api.syncHabits(payload, config: currentConfig)
             applyHabitSyncResponse(response)
             saveLocalHabits()
-            lastHabitSyncAt = response.syncedAt
             habitStatus = ""
         } catch {
             habitStatus = "Habit-Sync fehlgeschlagen: \(error.localizedDescription)"
@@ -1180,7 +1205,7 @@ struct ContentView: View {
     }
 
     private static func timestamp(_ value: String) -> TimeInterval {
-        ISO8601DateFormatter().date(from: value)?.timeIntervalSince1970 ?? 0
+        HabitTogglePlan.timestamp(value)
     }
 
     private static let defaultHabits = [
@@ -1306,7 +1331,7 @@ private struct RecipeSelectionRow: View {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(nutrient.label)
                         Spacer(minLength: 8)
-                        Text("\(LocalShoppingListBuilder.formatAmount(nutrient.amount * portionFactor)) \(nutrient.unit)")
+                        Text("\(LocalShoppingListBuilder.formatAmount(RecipePresentation.nutrientTotal(perServing: nutrient.amount, portions: portions))) \(nutrient.unit)")
                             .multilineTextAlignment(.trailing)
                     }
                     .font(.callout)

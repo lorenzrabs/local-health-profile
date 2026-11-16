@@ -15,12 +15,34 @@ describe("recipes", () => {
       "Skyr-Berry-Protein-Jar",
       "Cappuccino",
       "Green Smoothie",
+      "Chili sin Carne mit Kidneybohnen & Mais",
       "Kichererbsen-Spinat-Tomaten-Pfanne mit Feta",
       "Ofenlachs mit Brokkoli, Paprika & Reis",
       "Quinoa-Salat mit Feta",
-      "Super-Veggie-Bowl mit Beluga-Linsen"
+      "Rotes Linsen-Dal mit Kokosmilch & Blumenkohl",
+      "Super-Veggie-Bowl mit Beluga-Linsen",
+      "Zitronen-Orzo mit Zucchini, Erbsen & Feta"
     ]);
     expect(recipes.some((recipe) => recipe.name === "Waldfruchtjoghurt")).toBe(false);
+  });
+
+  it("exposes per-serving nutrients without changing scaled totals", () => {
+    const db = openDatabase(":memory:");
+    const recipes = getRecipes(db, 1);
+    const expected = [
+      { name: "Zitronen-Orzo mit Zucchini, Erbsen & Feta", calories: 650, protein: 27 },
+      { name: "Rotes Linsen-Dal mit Kokosmilch & Blumenkohl", calories: 760, protein: 29 },
+      { name: "Chili sin Carne mit Kidneybohnen & Mais", calories: 620, protein: 23 }
+    ];
+    for (const { name, calories, protein } of expected) {
+      const recipe = recipes.find((item) => item.name === name);
+      expect(recipe?.nutrientsPerServing.find((item) => item.key === "calories")?.amount).toBe(calories);
+      expect(recipe?.nutrientsPerServing.find((item) => item.key === "protein")?.amount).toBe(protein);
+      expect(recipe?.scaledNutrients.find((item) => item.key === "calories")?.totalAmount).toBe(calories);
+      expect(recipe?.scaledNutrients.find((item) => item.key === "protein")?.totalAmount).toBe(protein);
+    }
+    const twoPortions = getRecipes(db, 2).find((item) => item.name === expected[0].name);
+    expect(twoPortions?.scaledNutrients.find((item) => item.key === "calories")?.totalAmount).toBe(1300);
   });
 
   it("scales items and nutrients linearly for requested servings", () => {
@@ -135,6 +157,40 @@ describe("recipes", () => {
     expect(salmon?.scaledNutrients.find((nutrient) => nutrient.key === "calories")?.totalAmount).toBe(1120);
     expect(salmon?.scaledNutrients.find((nutrient) => nutrient.key === "protein")?.totalAmount).toBe(66);
     expect(salmon?.scaledNutrients.find((nutrient) => nutrient.key === "fiber")?.totalAmount).toBe(14);
+  });
+
+  it("seeds Zitronen-Orzo for two portions with shopping quantities and estimated macros", () => {
+    const db = openDatabase(":memory:");
+    const recipe = getRecipes(db, 2).find((item) => item.name === "Zitronen-Orzo mit Zucchini, Erbsen & Feta");
+    expect(recipe?.category).toBe("lunch");
+    expect(recipe?.servingBase).toBe(2);
+    expect(recipe?.scaledItems.find((item) => item.name === "Orzo / Kritharaki, trocken")?.totalAmount).toBe(160);
+    expect(recipe?.scaledItems.find((item) => item.name === "Feta")?.totalAmount).toBe(100);
+    expect(recipe?.scaledNutrients.find((item) => item.key === "calories")?.totalAmount).toBe(1300);
+    expect(recipe?.prepNotes).toContain("30–50 ml");
+    expect(recipe?.instructions).toContain("10–12 Minuten");
+  });
+
+  it("seeds Linsen-Dal for two portions including rice and meal-prep safety", () => {
+    const db = openDatabase(":memory:");
+    const recipe = getRecipes(db, 2).find((item) => item.name === "Rotes Linsen-Dal mit Kokosmilch & Blumenkohl");
+    expect(recipe?.scaledItems.find((item) => item.name === "Rote Linsen, trocken")?.totalAmount).toBe(150);
+    expect(recipe?.scaledItems.find((item) => item.name === "Basmatireis, trocken")?.totalAmount).toBe(100);
+    expect(recipe?.scaledNutrients.find((item) => item.key === "calories")?.totalAmount).toBe(1520);
+    expect(recipe?.prepNotes).toContain("24 Stunden");
+    expect(recipe?.instructions).toContain("220 °C");
+  });
+
+  it("seeds Chili sin Carne for two portions and keeps rice handling notes", () => {
+    const db = openDatabase(":memory:");
+    const recipe = getRecipes(db, 2).find((item) => item.name === "Chili sin Carne mit Kidneybohnen & Mais");
+    expect(recipe?.scaledItems.find((item) => item.name === "Kidneybohnen, abgetropft")?.totalAmount).toBe(240);
+    expect(recipe?.scaledItems.find((item) => item.name === "Mais, abgetropft")?.totalAmount).toBe(140);
+    expect(recipe?.scaledItems.find((item) => item.name === "Basmatireis, trocken")?.totalAmount).toBe(100);
+    expect(recipe?.scaledNutrients.find((item) => item.key === "calories")?.totalAmount).toBe(1240);
+    expect(recipe?.scaledNutrients.find((item) => item.key === "protein")?.totalAmount).toBe(46);
+    expect(recipe?.prepNotes).toContain("3 Monate");
+    expect(recipe?.instructions).toContain("20 Minuten");
   });
 
   it("normalizes custom serving input safely", () => {
