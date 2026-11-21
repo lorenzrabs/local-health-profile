@@ -72,7 +72,7 @@ struct HabitDefinition: Codable, Identifiable, Equatable {
     }
 }
 
-struct HabitEntry: Codable, Equatable {
+struct HabitEntry: Codable, Equatable, Sendable {
     var habitId: Int
     var habitClientId: String
     var date: String
@@ -135,7 +135,7 @@ struct HabitSyncResponse: Codable {
     var entries: [HabitEntry]
 }
 
-// Keep a habit tap local and small; the full bidirectional sync is only needed on launch/manual refresh.
+// A toggle sends one entry. Older caches may use legacy IDs or timestamps without fractional seconds.
 enum HabitTogglePlan {
     private static let fractionalFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -153,17 +153,6 @@ enum HabitTogglePlan {
         return sameHabit && entry.date == date
     }
 
-    static func replacing(_ entries: [HabitEntry], habit: HabitDefinition, date: String, completed: Bool, updatedAt: String) -> [HabitEntry] {
-        var result = entries
-        let entry = HabitEntry(habitId: habit.id, habitClientId: habit.clientId, date: date, completed: completed, updatedAt: updatedAt)
-        if let index = result.firstIndex(where: { matches($0, habit: habit, date: date) }) {
-            result[index] = entry
-        } else {
-            result.append(entry)
-        }
-        return result
-    }
-
     static func request(for entry: HabitEntry, since: String?) -> HabitSyncPayload {
         HabitSyncPayload(
             since: since,
@@ -179,6 +168,50 @@ enum HabitTogglePlan {
     }
 }
 
+struct HabitHistory: Sendable {
+    private var days: [String: [String: HabitEntry]] = [:]
+
+    init(_ entries: [HabitEntry] = []) {
+        merge(entries)
+    }
+
+    var entries: [HabitEntry] { days.values.flatMap(\.values) }
+
+    func entry(for habit: HabitDefinition, date: String) -> HabitEntry? {
+        guard let day = days[date] else { return nil }
+        return day[habit.clientId] ?? day.values.first { HabitTogglePlan.matches($0, habit: habit, date: date) }
+    }
+
+    @discardableResult
+    mutating func merge(_ entries: [HabitEntry]) -> Bool {
+        var changed = false
+        for entry in entries {
+            if let previous = days[entry.date]?[entry.habitClientId] {
+                guard previous != entry,
+                      previous.updatedAt == entry.updatedAt || HabitTogglePlan.timestamp(previous.updatedAt) <= HabitTogglePlan.timestamp(entry.updatedAt) else {
+                    continue
+                }
+            }
+            days[entry.date, default: [:]][entry.habitClientId] = entry
+            changed = true
+        }
+        return changed
+    }
+}
+
+actor HabitHistoryCache {
+    static let key = "localHabitEntriesJson"
+    private var lastSavedRevision = 0
+
+    func save(_ history: HabitHistory, revision: Int) {
+        guard revision > lastSavedRevision,
+              let data = try? JSONEncoder().encode(history.entries),
+              let json = String(data: data, encoding: .utf8) else { return }
+        UserDefaults.standard.set(json, forKey: Self.key)
+        lastSavedRevision = revision
+    }
+}
+
 struct ShoppingListExportsResponse: Codable {
     var exports: [ShoppingListExport]
 }
@@ -191,7 +224,7 @@ struct ShoppingListExport: Codable, Identifiable, Equatable {
     var consumedAt: String?
 }
 
-struct ShoppingListExportItem: Codable, Identifiable, Equatable {
+struct ShoppingListExportItem: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var name: String
     var amount: Double?
@@ -218,7 +251,7 @@ struct ShoppingListConsumeResponse: Codable {
     var createdReminderCount: Int?
 }
 
-struct Recipe: Codable, Identifiable, Equatable {
+struct Recipe: Codable, Identifiable, Equatable, Sendable {
     var id: Int
     var name: String
     var category: String
@@ -229,14 +262,14 @@ struct Recipe: Codable, Identifiable, Equatable {
     var nutrientsPerServing: [RecipeNutrient]
 }
 
-struct RecipeItem: Codable, Equatable {
+struct RecipeItem: Codable, Equatable, Sendable {
     var name: String
     var amount: Double
     var unit: String
     var excludeFromNutrition: Bool
 }
 
-struct RecipeNutrient: Codable, Equatable {
+struct RecipeNutrient: Codable, Equatable, Sendable {
     var key: String
     var label: String
     var amount: Double

@@ -7,7 +7,6 @@ struct ContentView: View {
     @AppStorage("lastSuccessfulHealthSyncAt") private var lastSuccessfulHealthSyncAt = ""
     @AppStorage("hasCompletedFullHealthSync") private var hasCompletedFullHealthSync = false
     @AppStorage("localHabitsJson") private var localHabitsJson = ""
-    @AppStorage("localHabitEntriesJson") private var localHabitEntriesJson = ""
     @AppStorage("localRecipesJson") private var localRecipesJson = ""
     @AppStorage("lastRecipeSyncAt") private var lastRecipeSyncAt = ""
 
@@ -16,17 +15,24 @@ struct ContentView: View {
     @State private var isWorking = false
     @State private var selectedHabitDate = Date()
     @State private var habits: [HabitDefinition] = []
-    @State private var habitEntries: [HabitEntry] = []
+    @State private var habitHistory = HabitHistory()
+    @State private var habitHistoryCache = HabitHistoryCache()
+    @State private var habitHistoryRevision = 0
+    @State private var didLoadHabitCache = false
     @State private var showingHabitMenu = false
     @State private var newHabitName = ""
     @State private var shoppingExports: [ShoppingListExport] = []
     @State private var shoppingStatus = ""
     @State private var isShoppingWorking = false
+    @State private var refreshingRecipesFor: PairingConfig?
+    @State private var refreshingExportsFor: PairingConfig?
     @State private var selectedReminderCalendarIdentifier = ""
     @State private var recipes: [Recipe] = []
     @State private var selectedRecipeIds: Set<Int> = []
     @State private var recipePortionsById: [Int: Int] = [:]
-    @StateObject private var reminderService = ReminderExportService()
+    @State private var shoppingPreview: ShoppingListExport?
+    @State private var reminderLists: [ReminderList] = []
+    @State private var reminderService = ReminderExportService()
 
     private let healthKit = HealthKitSyncService()
     private let api = APIClient()
@@ -56,9 +62,10 @@ struct ContentView: View {
             .task {
                 loadLocalHabits()
                 loadLocalRecipes()
-                await bidirectionalHabitSync()
-                await fetchPendingShoppingListExports()
-                await refreshRecipesFromServer()
+                async let habits: Void = bidirectionalHabitSync()
+                async let exports: Void = fetchPendingShoppingListExports()
+                async let recipes: Void = refreshRecipesFromServer()
+                _ = await (habits, exports, recipes)
             }
         }
     }
@@ -76,7 +83,12 @@ struct ContentView: View {
     }
 
     private var habitsScreen: some View {
-        ScrollView {
+        let day = selectedHabitDateKey
+        let active = activeHabits
+        let completed = active.reduce(0) { count, habit in
+            count + (habitHistory.entry(for: habit, date: day)?.completed == true ? 1 : 0)
+        }
+        return ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -107,7 +119,7 @@ struct ContentView: View {
                             DateButton(systemName: "chevron.left") { moveHabitDate(by: -1) }
                             Spacer()
                             VStack(spacing: 4) {
-                                Text("\(completedHabitCount)/\(activeHabits.count)")
+                                Text("\(completed)/\(active.count)")
                                     .font(.title.weight(.bold))
                                     .foregroundStyle(.black)
                                 Text("erledigt")
@@ -118,13 +130,13 @@ struct ContentView: View {
                             DateButton(systemName: "chevron.right") { moveHabitDate(by: 1) }
                         }
 
-                        ProgressView(value: activeHabits.isEmpty ? 0 : Double(completedHabitCount) / Double(activeHabits.count))
+                        ProgressView(value: active.isEmpty ? 0 : Double(completed) / Double(active.count))
                             .tint(.black)
 
                         VStack(spacing: 0) {
-                            ForEach(activeHabits) { habit in
-                                HabitToggleRow(habit: habit, isCompleted: habitBinding(habit))
-                                if habit.id != activeHabits.last?.id {
+                            ForEach(active) { habit in
+                                HabitToggleRow(habit: habit, isCompleted: habitBinding(habit, date: day))
+                                if habit.id != active.last?.id {
                                     Divider()
                                 }
                             }
@@ -133,7 +145,7 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.black.opacity(0.08)))
 
-                        if activeHabits.isEmpty {
+                        if active.isEmpty {
                             Text("Noch keine aktiven Habits. Über das Menü oben rechts kannst du neue anlegen.")
                                 .font(.callout)
                                 .foregroundStyle(AppTheme.mutedText)
@@ -161,6 +173,9 @@ struct ContentView: View {
         )
         .sheet(isPresented: $showingHabitMenu) {
             habitMenu
+        }
+        .task(id: day) {
+            await refreshHabitDay(day)
         }
     }
 
@@ -204,7 +219,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.black)
-                    .disabled(isShoppingWorking || !isPaired)
+                    .disabled(refreshingRecipesFor == currentConfig || !isPaired)
                     .accessibilityLabel("Rezepte aktualisieren")
                 }
 
@@ -213,20 +228,23 @@ struct ContentView: View {
                         .font(.callout)
                         .foregroundStyle(AppTheme.mutedText)
                 } else {
-                    VStack(spacing: 10) {
+                    LazyVStack(spacing: 10) {
                         ForEach(recipes) { recipe in
                             RecipeSelectionRow(
                                 recipe: recipe,
-                                isSelected: recipeSelectionBinding(recipe),
-                                portions: recipePortionsBinding(recipe)
+                                isSelected: selectedRecipeIds.contains(recipe.id),
+                                portions: recipePortionsById[recipe.id] ?? 1,
+                                onSelectionChange: { setRecipeSelected(recipe.id, selected: $0) },
+                                onPortionsChange: { setRecipePortions(recipe.id, portions: $0) }
                             )
+                            .equatable()
                         }
                     }
 
-                    if let export = localRecipeShoppingExport {
+                    if let export = shoppingPreview {
                         LocalShoppingPreviewCard(
                             export: export,
-                            reminderLists: reminderService.reminderLists,
+                            reminderLists: reminderLists,
                             selectedReminderCalendarIdentifier: $selectedReminderCalendarIdentifier,
                             isWorking: isShoppingWorking,
                             onLoadReminderLists: {
@@ -255,13 +273,13 @@ struct ContentView: View {
                         .foregroundStyle(.black)
                     Spacer()
                     Button {
-                        Task { await fetchPendingShoppingListExports() }
+                        Task { await fetchPendingShoppingListExports(forceStatus: true) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.bordered)
                     .tint(.black)
-                    .disabled(isShoppingWorking || !isPaired)
+                    .disabled(refreshingExportsFor == currentConfig || !isPaired)
                     .accessibilityLabel("Pending Web-Einkaufslisten aktualisieren")
                 }
 
@@ -278,7 +296,7 @@ struct ContentView: View {
                         .font(.callout)
                         .foregroundStyle(AppTheme.mutedText)
                 } else {
-                    if reminderService.reminderLists.isEmpty {
+                    if reminderLists.isEmpty {
                         Button {
                             Task { await loadReminderListsForShopping() }
                         } label: {
@@ -294,7 +312,7 @@ struct ContentView: View {
                         ForEach(shoppingExports) { export in
                             ShoppingExportCard(
                                 export: export,
-                                reminderLists: reminderService.reminderLists,
+                                reminderLists: reminderLists,
                                 selectedReminderCalendarIdentifier: $selectedReminderCalendarIdentifier,
                                 isWorking: isShoppingWorking,
                                 onImport: {
@@ -557,11 +575,7 @@ struct ContentView: View {
     }
 
     private var selectedHabitDateKey: String {
-        Self.dateKey(selectedHabitDate)
-    }
-
-    private var completedHabitCount: Int {
-        activeHabits.filter { isHabitCompleted($0) }.count
+        Self.dayFormatter.string(from: selectedHabitDate)
     }
 
     private var recipeSyncSubtitle: String {
@@ -574,51 +588,51 @@ struct ContentView: View {
         return "\(recipes.count) Rezepte · aktualisiert \(date.formatted(.dateTime.day().month().hour().minute()))"
     }
 
-    private var localRecipeShoppingExport: ShoppingListExport? {
+    private func rebuildShoppingPreview() {
         let selections = recipes.compactMap { recipe -> RecipeSelection? in
             guard selectedRecipeIds.contains(recipe.id) else { return nil }
-            return RecipeSelection(recipe: recipe, portions: normalizedPortions(recipePortionsById[recipe.id] ?? 1))
+            return RecipeSelection(recipe: recipe, portions: recipePortionsById[recipe.id] ?? 1)
         }
-        guard !selections.isEmpty else { return nil }
-        return LocalShoppingListBuilder.generate(from: selections, createdAt: isoFormatter.string(from: Date()))
+        if selections.isEmpty {
+            shoppingPreview = nil
+        } else {
+            shoppingPreview = LocalShoppingListBuilder.generate(from: selections, createdAt: isoFormatter.string(from: Date()))
+        }
     }
 
-    private func recipeSelectionBinding(_ recipe: Recipe) -> Binding<Bool> {
-        Binding(
-            get: { selectedRecipeIds.contains(recipe.id) },
-            set: { selected in
-                if selected {
-                    selectedRecipeIds.insert(recipe.id)
-                    recipePortionsById[recipe.id] = normalizedPortions(recipePortionsById[recipe.id] ?? 1)
-                } else {
-                    selectedRecipeIds.remove(recipe.id)
-                }
-            }
-        )
+    private func setRecipeSelected(_ id: Int, selected: Bool) {
+        if selected {
+            selectedRecipeIds.insert(id)
+        } else {
+            selectedRecipeIds.remove(id)
+        }
+        rebuildShoppingPreview()
     }
 
-    private func recipePortionsBinding(_ recipe: Recipe) -> Binding<Int> {
-        Binding(
-            get: { normalizedPortions(recipePortionsById[recipe.id] ?? 1) },
-            set: { portions in
-                recipePortionsById[recipe.id] = normalizedPortions(portions)
-            }
-        )
-    }
-
-    private func normalizedPortions(_ value: Int) -> Int {
-        min(99, max(1, value))
+    private func setRecipePortions(_ id: Int, portions: Int) {
+        recipePortionsById[id] = min(99, max(1, portions))
+        if selectedRecipeIds.contains(id) {
+            rebuildShoppingPreview()
+        }
     }
 
     @MainActor
-    private func fetchPendingShoppingListExports() async {
-        guard isPaired else { return }
-        isShoppingWorking = true
-        defer { isShoppingWorking = false }
+    private func fetchPendingShoppingListExports(forceStatus: Bool = false) async {
+        let config = currentConfig
+        guard isPaired, refreshingExportsFor != config else { return }
+        refreshingExportsFor = config
+        defer {
+            if refreshingExportsFor == config { refreshingExportsFor = nil }
+        }
         do {
-            shoppingExports = try await api.fetchPendingShoppingListExports(config: currentConfig)
-            shoppingStatus = shoppingExports.isEmpty ? "Keine pending Einkaufsliste." : "Pending Einkaufslisten geladen."
+            let fetched = try await api.fetchPendingShoppingListExports(config: config)
+            guard !Task.isCancelled, config == currentConfig else { return }
+            shoppingExports = fetched
+            if forceStatus {
+                shoppingStatus = fetched.isEmpty ? "Keine pending Einkaufsliste." : "Pending Einkaufslisten geladen."
+            }
         } catch {
+            guard !Task.isCancelled, config == currentConfig else { return }
             shoppingStatus = "Einkaufslisten-Sync fehlgeschlagen: \(error.localizedDescription)"
         }
     }
@@ -631,9 +645,7 @@ struct ContentView: View {
             return
         }
         recipes = decoded
-        for recipe in decoded {
-            recipePortionsById[recipe.id] = normalizedPortions(recipePortionsById[recipe.id] ?? 1)
-        }
+        rebuildShoppingPreview()
     }
 
     private func saveLocalRecipes() {
@@ -647,21 +659,27 @@ struct ContentView: View {
 
     @MainActor
     private func refreshRecipesFromServer(forceStatus: Bool = false) async {
-        guard isPaired else { return }
-        isShoppingWorking = true
-        defer { isShoppingWorking = false }
+        let config = currentConfig
+        guard isPaired, refreshingRecipesFor != config else { return }
+        refreshingRecipesFor = config
+        defer {
+            if refreshingRecipesFor == config { refreshingRecipesFor = nil }
+        }
 
         do {
-            let fetched = try await api.fetchRecipes(config: currentConfig)
-            recipes = fetched
-            for recipe in fetched {
-                recipePortionsById[recipe.id] = normalizedPortions(recipePortionsById[recipe.id] ?? 1)
+            let fetched = try await api.fetchRecipes(config: config)
+            guard !Task.isCancelled, config == currentConfig else { return }
+            if fetched != recipes {
+                recipes = fetched
+                let ids = Set(fetched.map(\.id))
+                selectedRecipeIds.formIntersection(ids)
+                rebuildShoppingPreview()
+                saveLocalRecipes()
             }
-            selectedRecipeIds = selectedRecipeIds.filter { id in fetched.contains(where: { $0.id == id }) }
             lastRecipeSyncAt = isoFormatter.string(from: Date())
-            saveLocalRecipes()
-            shoppingStatus = "Rezepte aktualisiert: \(fetched.count) lokal gespeichert."
+            if forceStatus { shoppingStatus = "Rezepte aktualisiert: \(fetched.count) lokal gespeichert." }
         } catch {
+            guard !Task.isCancelled, config == currentConfig else { return }
             if forceStatus || recipes.isEmpty {
                 shoppingStatus = "Rezepte konnten nicht aktualisiert werden. Lokaler Cache bleibt verfügbar: \(error.localizedDescription)"
             }
@@ -670,6 +688,7 @@ struct ContentView: View {
 
     @MainActor
     private func loadReminderListsForShopping() async {
+        guard !isShoppingWorking else { return }
         isShoppingWorking = true
         defer { isShoppingWorking = false }
         do {
@@ -677,8 +696,8 @@ struct ContentView: View {
                 shoppingStatus = "Zugriff auf Apple Erinnerungen wurde nicht erlaubt."
                 return
             }
-            if let calendar = reminderService.calendar(preferredIdentifier: selectedReminderCalendarIdentifier, preferredName: "Einkauf") {
-                selectedReminderCalendarIdentifier = calendar.calendarIdentifier
+            if let calendar = await shoppingCalendar() {
+                selectedReminderCalendarIdentifier = calendar.id
                 shoppingStatus = "Erinnerungen-Liste „\(calendar.title)” ausgewählt."
             } else {
                 shoppingStatus = "Keine beschreibbare Erinnerungen-Liste gefunden."
@@ -690,6 +709,7 @@ struct ContentView: View {
 
     @MainActor
     private func importShoppingListExport(_ export: ShoppingListExport) async {
+        guard !isShoppingWorking else { return }
         guard isPaired else {
             shoppingStatus = "Bitte zuerst mit dem lokalen Dashboard koppeln."
             return
@@ -706,18 +726,15 @@ struct ContentView: View {
                 return
             }
 
-            guard let calendar = reminderService.calendar(
-                preferredIdentifier: selectedReminderCalendarIdentifier,
-                preferredName: "Einkauf"
-            ) else {
+            guard let calendar = await shoppingCalendar() else {
                 let message = "Keine beschreibbare Erinnerungen-Liste gefunden."
                 shoppingStatus = message
                 try? await api.reportShoppingListExportError(id: export.id, message: message, config: currentConfig)
                 return
             }
 
-            selectedReminderCalendarIdentifier = calendar.calendarIdentifier
-            let createdCount = try reminderService.createReminders(from: export.items, in: calendar, exportId: export.id)
+            selectedReminderCalendarIdentifier = calendar.id
+            let createdCount = try await reminderService.createReminders(from: export.items, calendarId: calendar.id, exportId: export.id)
             _ = try await api.markShoppingListExportConsumed(
                 id: export.id,
                 createdReminderCount: createdCount,
@@ -734,6 +751,7 @@ struct ContentView: View {
 
     @MainActor
     private func importLocalRecipeShoppingList(_ export: ShoppingListExport) async {
+        guard !isShoppingWorking else { return }
         isShoppingWorking = true
         defer { isShoppingWorking = false }
 
@@ -743,20 +761,23 @@ struct ContentView: View {
                 return
             }
 
-            guard let calendar = reminderService.calendar(
-                preferredIdentifier: selectedReminderCalendarIdentifier,
-                preferredName: "Einkauf"
-            ) else {
+            guard let calendar = await shoppingCalendar() else {
                 shoppingStatus = "Keine beschreibbare Erinnerungen-Liste gefunden."
                 return
             }
 
-            selectedReminderCalendarIdentifier = calendar.calendarIdentifier
-            let createdCount = try reminderService.createReminders(from: export.items, in: calendar, exportId: export.id)
+            selectedReminderCalendarIdentifier = calendar.id
+            let createdCount = try await reminderService.createReminders(from: export.items, calendarId: calendar.id, exportId: export.id)
             shoppingStatus = "\(createdCount) Erinnerungen aus lokalen Rezepten in „\(calendar.title)” erstellt."
         } catch {
             shoppingStatus = "Lokaler Reminder-Import fehlgeschlagen: \(error.localizedDescription)"
         }
+    }
+
+    private func shoppingCalendar() async -> ReminderList? {
+        let result = await reminderService.calendars(preferredIdentifier: selectedReminderCalendarIdentifier, preferredName: "Einkauf")
+        reminderLists = result.lists
+        return result.selected
     }
 
     @MainActor
@@ -869,17 +890,18 @@ struct ContentView: View {
         pairingToken = incomingToken
         status = "Gekoppelt. Du kannst jetzt synchronisieren."
         Task {
-            await bidirectionalHabitSync()
-            await fetchPendingShoppingListExports()
-            await refreshRecipesFromServer(forceStatus: true)
+            async let habits: Void = bidirectionalHabitSync()
+            async let exports: Void = fetchPendingShoppingListExports()
+            async let recipes: Void = refreshRecipesFromServer(forceStatus: true)
+            _ = await (habits, exports, recipes)
         }
     }
 
-    private func habitBinding(_ habit: HabitDefinition) -> Binding<Bool> {
+    private func habitBinding(_ habit: HabitDefinition, date: String) -> Binding<Bool> {
         Binding(
-            get: { isHabitCompleted(habit) },
+            get: { habitHistory.entry(for: habit, date: date)?.completed ?? false },
             set: { completed in
-                setHabit(habit, completed: completed)
+                setHabit(habit, date: date, completed: completed)
             }
         )
     }
@@ -898,19 +920,12 @@ struct ContentView: View {
         )
     }
 
-    private func isHabitCompleted(_ habit: HabitDefinition) -> Bool {
-        habitEntries.first {
-            ($0.habitClientId == habit.clientId || $0.habitId == habit.id) && $0.date == selectedHabitDateKey
-        }?.completed ?? false
-    }
-
-    private func setHabit(_ habit: HabitDefinition, completed: Bool) {
-        let date = selectedHabitDateKey
-        let previous = habitEntries.first { HabitTogglePlan.matches($0, habit: habit, date: date) }
-        let time = max(Date().timeIntervalSince1970, HabitTogglePlan.timestamp(previous?.updatedAt ?? "") + 0.001)
+    private func setHabit(_ habit: HabitDefinition, date: String, completed: Bool) {
+        let previous = habitHistory.entry(for: habit, date: date)
+        let previousMillis = (HabitTogglePlan.timestamp(previous?.updatedAt ?? "") * 1000).rounded()
+        let time = max(Date().timeIntervalSince1970, (previousMillis + 1) / 1000)
         let entry = HabitEntry(habitId: habit.id, habitClientId: habit.clientId, date: date, completed: completed, updatedAt: isoFormatter.string(from: Date(timeIntervalSince1970: time)))
-        habitEntries = HabitTogglePlan.replacing(habitEntries, habit: habit, date: date, completed: completed, updatedAt: entry.updatedAt)
-        saveLocalHabitEntries()
+        mergeHabitEntries([entry])
         Task { await syncHabitToggle(entry) }
     }
 
@@ -958,10 +973,24 @@ struct ContentView: View {
 
     private func moveHabitDate(by days: Int) {
         selectedHabitDate = Calendar.current.date(byAdding: .day, value: days, to: selectedHabitDate) ?? selectedHabitDate
-        Task { await bidirectionalHabitSync() }
+    }
+
+    private func refreshHabitDay(_ date: String) async {
+        guard isPaired else { return }
+        let config = currentConfig
+        do {
+            try await Task.sleep(for: .milliseconds(250))
+            let day = try await api.fetchHabits(date: date, config: config)
+            guard !Task.isCancelled, config == currentConfig, date == day.date, date == selectedHabitDateKey else { return }
+            applyHabitSyncResponse(definitions: day.definitions, entries: day.entries)
+        } catch {
+            // Date navigation remains usable when the server is offline.
+        }
     }
 
     private func loadLocalHabits() {
+        guard !didLoadHabitCache else { return }
+        didLoadHabitCache = true
         let decoder = JSONDecoder()
         if let data = localHabitsJson.data(using: .utf8),
            let decoded = try? decoder.decode([HabitDefinition].self, from: data),
@@ -971,16 +1000,15 @@ struct ContentView: View {
             habits = Self.defaultHabits
         }
 
-        if let data = localHabitEntriesJson.data(using: .utf8),
+        if let data = UserDefaults.standard.string(forKey: HabitHistoryCache.key)?.data(using: .utf8),
            let decoded = try? decoder.decode([HabitEntry].self, from: data) {
-            habitEntries = Self.deduplicateEntries(decoded)
+            let clientIds = Dictionary(habits.map { ($0.id, $0.clientId) }, uniquingKeysWith: { first, _ in first })
+            habitHistory = HabitHistory(decoded.map { stored in
+                var entry = stored
+                entry.habitClientId = clientIds[entry.habitId] ?? entry.habitClientId
+                return entry
+            })
         }
-        for entryIndex in habitEntries.indices {
-            if let habit = habits.first(where: { $0.id == habitEntries[entryIndex].habitId }) {
-                habitEntries[entryIndex].habitClientId = habit.clientId
-            }
-        }
-        saveLocalHabits()
     }
 
     private func saveLocalHabits() {
@@ -989,18 +1017,24 @@ struct ContentView: View {
         if habits != cleanHabits {
             habits = cleanHabits
         }
-        habitEntries = Self.deduplicateEntries(habitEntries)
         if let data = try? encoder.encode(habits), let json = String(data: data, encoding: .utf8) {
             localHabitsJson = json
         }
-        saveLocalHabitEntries()
     }
 
-    private func saveLocalHabitEntries() {
-        let encoder = JSONEncoder()
-        if let data = try? encoder.encode(habitEntries), let json = String(data: data, encoding: .utf8) {
-            localHabitEntriesJson = json
-        }
+    private func mergeHabitEntries(_ entries: [HabitEntry]) {
+        var merged = habitHistory
+        guard merged.merge(entries) else { return }
+        habitHistory = merged
+        persistHabitHistory()
+    }
+
+    private func persistHabitHistory() {
+        habitHistoryRevision += 1
+        let revision = habitHistoryRevision
+        let snapshot = habitHistory
+        let cache = habitHistoryCache
+        Task { await cache.save(snapshot, revision: revision) }
     }
 
     @MainActor
@@ -1016,11 +1050,8 @@ struct ContentView: View {
             // A newer edit from another device may have won. Merge only this entry.
             let response = try await api.syncHabits(HabitTogglePlan.request(for: entry, since: entry.updatedAt), config: config)
             guard config == currentConfig else { return }
-            if let remote = response.entries.first(where: { $0.date == entry.date && $0.habitClientId == entry.habitClientId }),
-               let index = habitEntries.firstIndex(where: { $0.date == entry.date && $0.habitClientId == entry.habitClientId }),
-               Self.timestamp(remote.updatedAt) > Self.timestamp(habitEntries[index].updatedAt) {
-                habitEntries[index] = remote
-                saveLocalHabitEntries()
+            if let remote = response.entries.first(where: { $0.date == entry.date && $0.habitClientId == entry.habitClientId }) {
+                mergeHabitEntries([remote])
             }
             habitStatus = ""
         } catch {
@@ -1032,6 +1063,7 @@ struct ContentView: View {
     @MainActor
     private func bidirectionalHabitSync() async {
         guard isPaired else { return }
+        let config = currentConfig
         do {
             let payload = HabitSyncPayload(
                 // A full reconciliation also repairs local history after a server restore or re-pairing.
@@ -1046,7 +1078,7 @@ struct ContentView: View {
                         updatedAt: $0.updatedAt
                     )
                 },
-                entries: habitEntries.map {
+                entries: habitHistory.entries.map {
                     HabitEntryPayload(
                         habitId: $0.habitId > 0 ? $0.habitId : nil,
                         habitClientId: $0.habitClientId,
@@ -1056,11 +1088,12 @@ struct ContentView: View {
                     )
                 }
             )
-            let response = try await api.syncHabits(payload, config: currentConfig)
-            applyHabitSyncResponse(response)
-            saveLocalHabits()
+            let response = try await api.syncHabits(payload, config: config)
+            guard !Task.isCancelled, config == currentConfig else { return }
+            applyHabitSyncResponse(definitions: response.definitions, entries: response.entries)
             habitStatus = ""
         } catch {
+            guard !Task.isCancelled, config == currentConfig else { return }
             habitStatus = "Habit-Sync fehlgeschlagen: \(error.localizedDescription)"
         }
     }
@@ -1078,55 +1111,45 @@ struct ContentView: View {
         PairingConfig(serverUrl: serverUrl, token: pairingToken)
     }
 
-    private func applyHabitSyncResponse(_ response: HabitSyncResponse) {
-        for definition in response.definitions {
-            adoptServerHabit(definition, replacingLocalId: habits.first {
-                $0.clientId == definition.clientId || Self.normalizedName($0.name) == Self.normalizedName(definition.name)
-            }?.id ?? definition.id)
-        }
-
-        for entry in response.entries {
-            if let index = habitEntries.firstIndex(where: { $0.date == entry.date && $0.habitClientId == entry.habitClientId }) {
-                if Self.timestamp(entry.updatedAt) >= Self.timestamp(habitEntries[index].updatedAt) {
-                    habitEntries[index] = entry
+    private func applyHabitSyncResponse(definitions: [HabitDefinition], entries: [HabitEntry]) {
+        var updatedHabits = habits
+        var remapped: [Int: HabitDefinition] = [:]
+        for definition in definitions {
+            let sameIdentity = updatedHabits.firstIndex { $0.clientId == definition.clientId || $0.id == definition.id }
+            let name = Self.normalizedName(definition.name)
+            if let index = sameIdentity ?? updatedHabits.firstIndex(where: { Self.normalizedName($0.name) == name }) {
+                let local = updatedHabits[index]
+                if local.id != definition.id || local.clientId != definition.clientId {
+                    remapped[local.id] = definition
                 }
+                var resolved = definition
+                if local.updatedAt != definition.updatedAt, Self.timestamp(local.updatedAt) > Self.timestamp(definition.updatedAt) {
+                    resolved = local
+                    resolved.id = definition.id
+                    resolved.clientId = definition.clientId
+                }
+                updatedHabits[index] = resolved
             } else {
-                habitEntries.append(entry)
+                updatedHabits.append(definition)
             }
         }
 
-        habits = Self.deduplicateHabits(habits)
-        habitEntries = Self.deduplicateEntries(habitEntries)
-    }
-
-    private func mergeServerHabitDay(_ day: HabitDay) {
-        for definition in day.definitions {
-            if let local = habits.first(where: { Self.normalizedName($0.name) == Self.normalizedName(definition.name) }) {
-                adoptServerHabit(definition, replacingLocalId: local.id)
-            } else {
-                habits.append(definition)
-            }
+        updatedHabits = Self.deduplicateHabits(updatedHabits)
+        if habits != updatedHabits {
+            habits = updatedHabits
+            saveLocalHabits()
         }
-        habitEntries.removeAll { $0.date == day.date && day.definitions.map(\.id).contains($0.habitId) }
-        habitEntries.append(contentsOf: day.entries)
-        habits = Self.deduplicateHabits(habits)
-        habitEntries = Self.deduplicateEntries(habitEntries)
-    }
-
-    private func adoptServerHabit(_ serverHabit: HabitDefinition, replacingLocalId localId: Int) {
-        if let existingIndex = habits.firstIndex(where: { $0.clientId == serverHabit.clientId || $0.id == serverHabit.id }) {
-            habits[existingIndex] = serverHabit
-        } else if let localIndex = habits.firstIndex(where: { $0.id == localId }) {
-            habits[localIndex] = serverHabit
-        } else {
-            habits.append(serverHabit)
+        if !remapped.isEmpty {
+            habitHistory = HabitHistory(habitHistory.entries.map { stored in
+                guard let definition = remapped[stored.habitId] else { return stored }
+                var entry = stored
+                entry.habitId = definition.id
+                entry.habitClientId = definition.clientId
+                return entry
+            })
+            persistHabitHistory()
         }
-        for entryIndex in habitEntries.indices where habitEntries[entryIndex].habitId == localId || habitEntries[entryIndex].habitClientId == serverHabit.clientId {
-            habitEntries[entryIndex].habitId = serverHabit.id
-            habitEntries[entryIndex].habitClientId = serverHabit.clientId
-        }
-        habits = Self.deduplicateHabits(habits)
-        habitEntries = Self.deduplicateEntries(habitEntries)
+        mergeHabitEntries(entries)
     }
 
     private func nextLocalHabitId() -> Int {
@@ -1145,14 +1168,14 @@ struct ContentView: View {
         date.formatted(.dateTime.weekday(.wide).day().month().year())
     }
 
-    private static func dateKey(_ date: Date) -> String {
+    private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
+        return formatter
+    }()
 
     private static func normalizedName(_ name: String) -> String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1187,21 +1210,6 @@ struct ContentView: View {
         if left.id > 0 && right.id <= 0 { return left }
         if right.id > 0 && left.id <= 0 { return right }
         return left.id <= right.id ? left : right
-    }
-
-    private static func deduplicateEntries(_ input: [HabitEntry]) -> [HabitEntry] {
-        var byKey: [String: HabitEntry] = [:]
-        for entry in input {
-            let key = "\(entry.date)-\(entry.habitClientId)"
-            if let existing = byKey[key], timestamp(existing.updatedAt) > timestamp(entry.updatedAt) {
-                continue
-            }
-            byKey[key] = entry
-        }
-        return byKey.values.sorted {
-            if $0.date == $1.date { return $0.habitClientId < $1.habitClientId }
-            return $0.date < $1.date
-        }
     }
 
     private static func timestamp(_ value: String) -> TimeInterval {
@@ -1252,14 +1260,21 @@ private struct DateButton: View {
     }
 }
 
-private struct RecipeSelectionRow: View {
+private struct RecipeSelectionRow: View, Equatable {
     let recipe: Recipe
-    @Binding var isSelected: Bool
-    @Binding var portions: Int
+    let isSelected: Bool
+    let portions: Int
+    let onSelectionChange: (Bool) -> Void
+    let onPortionsChange: (Int) -> Void
+    @State private var showingDetails = false
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.recipe == rhs.recipe && lhs.isSelected == rhs.isSelected && lhs.portions == rhs.portions
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: $isSelected) {
+            Toggle(isOn: Binding(get: { isSelected }, set: onSelectionChange)) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(recipe.name)
                         .font(.body.weight(.semibold))
@@ -1272,15 +1287,15 @@ private struct RecipeSelectionRow: View {
             .toggleStyle(.switch)
             .tint(.black)
 
-            Stepper(value: $portions, in: 1...99) {
+            Stepper(value: Binding(get: { portions }, set: onPortionsChange), in: 1...99) {
                 Text("\(portions) Portion\(portions == 1 ? "" : "en")")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.black)
             }
             .tint(.black)
 
-            DisclosureGroup("Rezept ansehen") {
-                recipeDetails
+            DisclosureGroup("Rezept ansehen", isExpanded: $showingDetails) {
+                if showingDetails { recipeDetails }
             }
             .tint(.black)
         }
@@ -1356,11 +1371,12 @@ private struct RecipeSelectionRow: View {
 
 private struct LocalShoppingPreviewCard: View {
     let export: ShoppingListExport
-    let reminderLists: [EKCalendar]
+    let reminderLists: [ReminderList]
     @Binding var selectedReminderCalendarIdentifier: String
     let isWorking: Bool
     let onLoadReminderLists: () -> Void
     let onImport: () -> Void
+    @State private var showingPreview = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1389,30 +1405,32 @@ private struct LocalShoppingPreviewCard: View {
             } else {
                 Picker("Ziel-Liste", selection: $selectedReminderCalendarIdentifier) {
                     Text("Automatisch").tag("")
-                    ForEach(reminderLists, id: \.calendarIdentifier) { list in
-                        Text(list.title).tag(list.calendarIdentifier)
+                    ForEach(reminderLists) { list in
+                        Text(list.title).tag(list.id)
                     }
                 }
                 .pickerStyle(.menu)
                 .tint(.black)
             }
 
-            DisclosureGroup("Vorschau") {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(export.items) { item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(ReminderExportService.formatReminderTitle(item))
-                                .font(.body)
-                                .foregroundStyle(.black)
-                            if let sources = item.sourceRecipeNames, !sources.isEmpty {
-                                Text("Quelle: \(sources.joined(separator: ", "))")
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.mutedText)
+            DisclosureGroup("Vorschau", isExpanded: $showingPreview) {
+                if showingPreview {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(export.items) { item in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(ReminderExportService.formatReminderTitle(item))
+                                    .font(.body)
+                                    .foregroundStyle(.black)
+                                if let sources = item.sourceRecipeNames, !sources.isEmpty {
+                                    Text("Quelle: \(sources.joined(separator: ", "))")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.mutedText)
+                                }
                             }
                         }
                     }
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
             }
             .tint(.black)
 
@@ -1429,7 +1447,7 @@ private struct LocalShoppingPreviewCard: View {
 
 private struct ShoppingExportCard: View {
     let export: ShoppingListExport
-    let reminderLists: [EKCalendar]
+    let reminderLists: [ReminderList]
     @Binding var selectedReminderCalendarIdentifier: String
     let isWorking: Bool
     let onImport: () -> Void
@@ -1451,8 +1469,8 @@ private struct ShoppingExportCard: View {
             if !reminderLists.isEmpty {
                 Picker("Ziel-Liste", selection: $selectedReminderCalendarIdentifier) {
                     Text("Automatisch").tag("")
-                    ForEach(reminderLists, id: \.calendarIdentifier) { list in
-                        Text(list.title).tag(list.calendarIdentifier)
+                    ForEach(reminderLists) { list in
+                        Text(list.title).tag(list.id)
                     }
                 }
                 .pickerStyle(.menu)
@@ -1497,38 +1515,22 @@ private struct ShoppingExportCard: View {
     }
 }
 
-@MainActor
-private final class ReminderExportService: ObservableObject {
-    private let eventStore = EKEventStore()
+private struct ReminderList: Identifiable, Sendable {
+    let id: String
+    let title: String
+}
 
-    @Published var reminderLists: [EKCalendar] = []
+private actor ReminderExportService {
+    private lazy var eventStore = EKEventStore()
 
     func requestAccessIfNeeded() async throws -> Bool {
         let status = EKEventStore.authorizationStatus(for: .reminder)
 
         switch status {
         case .fullAccess, .authorized:
-            loadReminderLists()
             return true
         case .notDetermined:
-            let granted: Bool
-            if #available(iOS 17.0, *) {
-                granted = try await eventStore.requestFullAccessToReminders()
-            } else {
-                granted = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
-                    eventStore.requestAccess(to: .reminder) { granted, error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume(returning: granted)
-                        }
-                    }
-                }
-            }
-            if granted {
-                loadReminderLists()
-            }
-            return granted
+            return try await eventStore.requestFullAccessToReminders()
         case .denied, .restricted, .writeOnly:
             return false
         @unknown default:
@@ -1536,47 +1538,42 @@ private final class ReminderExportService: ObservableObject {
         }
     }
 
-    func calendar(preferredIdentifier: String, preferredName: String) -> EKCalendar? {
-        loadReminderLists()
-        if !preferredIdentifier.isEmpty,
-           let selected = reminderLists.first(where: { $0.calendarIdentifier == preferredIdentifier }) {
-            return selected
-        }
-        if let named = reminderLists.first(where: { $0.title.localizedCaseInsensitiveCompare(preferredName) == .orderedSame }) {
-            return named
-        }
-        if let defaultCalendar = eventStore.defaultCalendarForNewReminders(), defaultCalendar.allowsContentModifications {
-            return defaultCalendar
-        }
-        return reminderLists.first
-    }
-
-    func createReminders(from items: [ShoppingListExportItem], in calendar: EKCalendar, exportId: String) throws -> Int {
-        var createdCount = 0
-
-        for item in items where !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let reminder = EKReminder(eventStore: eventStore)
-            reminder.calendar = calendar
-            reminder.title = Self.formatReminderTitle(item)
-            reminder.notes = Self.formatReminderNotes(item, exportId: exportId)
-
-            try eventStore.save(reminder, commit: false)
-            createdCount += 1
-        }
-
-        guard createdCount > 0 else {
-            throw ReminderExportError.emptyList
-        }
-
-        try eventStore.commit()
-        return createdCount
-    }
-
-    func loadReminderLists() {
-        reminderLists = eventStore
-            .calendars(for: .reminder)
+    func calendars(preferredIdentifier: String, preferredName: String) -> (selected: ReminderList?, lists: [ReminderList]) {
+        let lists = eventStore.calendars(for: .reminder)
             .filter(\.allowsContentModifications)
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            .map { ReminderList(id: $0.calendarIdentifier, title: $0.title) }
+        if let preferred = lists.first(where: { $0.id == preferredIdentifier })
+            ?? lists.first(where: { $0.title.localizedCaseInsensitiveCompare(preferredName) == .orderedSame }) {
+            return (preferred, lists)
+        }
+        let defaultId = eventStore.defaultCalendarForNewReminders()?.calendarIdentifier
+        return (lists.first { $0.id == defaultId } ?? lists.first, lists)
+    }
+
+    func createReminders(from items: [ShoppingListExportItem], calendarId: String, exportId: String) throws -> Int {
+        guard let calendar = eventStore.calendar(withIdentifier: calendarId), calendar.allowsContentModifications else {
+            throw ReminderExportError.calendarUnavailable
+        }
+        var createdCount = 0
+
+        do {
+            for item in items where !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let reminder = EKReminder(eventStore: eventStore)
+                reminder.calendar = calendar
+                reminder.title = Self.formatReminderTitle(item)
+                reminder.notes = Self.formatReminderNotes(item, exportId: exportId)
+
+                try eventStore.save(reminder, commit: false)
+                createdCount += 1
+            }
+            guard createdCount > 0 else { throw ReminderExportError.emptyList }
+            try eventStore.commit()
+            return createdCount
+        } catch {
+            eventStore.reset()
+            throw error
+        }
     }
 
     static func formatReminderTitle(_ item: ShoppingListExportItem) -> String {
@@ -1617,8 +1614,9 @@ private enum LocalShoppingListBuilder {
                 guard !name.isEmpty else { continue }
 
                 let unit = item.unit.trimmingCharacters(in: .whitespacesAndNewlines)
-                let category = categorize(name)
-                let key = "\(normalize(name))|\(unit.lowercased())|\(category)"
+                let normalizedName = normalize(name)
+                let category = categorize(normalizedName)
+                let key = "\(normalizedName)|\(unit.lowercased())|\(category)"
                 let amount = roundAmount(item.amount * factor)
 
                 if var existing = merged[key] {
@@ -1664,8 +1662,7 @@ private enum LocalShoppingListBuilder {
 
     private static let categoryOrder = ["Obst & Gemüse", "Milchprodukte", "Trockenwaren", "Fleisch/Fisch", "Sonstiges"]
 
-    private static func categorize(_ name: String) -> String {
-        let normalized = normalize(name)
+    private static func categorize(_ normalized: String) -> String {
         if normalized.contains("paprikapulver") {
             return "Sonstiges"
         }
@@ -1768,11 +1765,14 @@ private enum LocalShoppingListBuilder {
 
 private enum ReminderExportError: LocalizedError {
     case emptyList
+    case calendarUnavailable
 
     var errorDescription: String? {
         switch self {
         case .emptyList:
             return "Die Einkaufsliste enthält keine gültigen Einträge."
+        case .calendarUnavailable:
+            return "Die ausgewählte Erinnerungen-Liste ist nicht mehr verfügbar."
         }
     }
 }
